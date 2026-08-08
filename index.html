@@ -299,17 +299,17 @@
 
     const beamGroup = new THREE.Group();
 
-    // オーラ
+    // ★修正: オーラ（円柱をZ軸方向へ伸ばす）
     const outerGeo = new THREE.CylinderGeometry(0.06, 0.015, 10, 16);
-    outerGeo.rotateX(Math.PI / 2);
-    outerGeo.translate(0, 0, -5);
+    outerGeo.rotateX(-Math.PI / 2);
+    outerGeo.translate(0, 0, 5);
     const outerMat = new THREE.MeshBasicMaterial({ color: 0xff1100, transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending });
     const outerMesh = new THREE.Mesh(outerGeo, outerMat);
 
-    // コア
+    // ★修正: コア（円柱をZ軸方向へ伸ばす）
     const innerGeo = new THREE.CylinderGeometry(0.025, 0.005, 10, 16);
-    innerGeo.rotateX(Math.PI / 2);
-    innerGeo.translate(0, 0, -5);
+    innerGeo.rotateX(-Math.PI / 2);
+    innerGeo.translate(0, 0, 5);
     const innerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending });
     const innerMesh = new THREE.Mesh(innerGeo, innerMat);
 
@@ -370,7 +370,7 @@
 
         beamGroup.position.set(tipX, tipY, tipZ);
 
-        // ★ ビームの向きを反転修正（付け根 → 指先 の前方向へ飛ばす）
+        // ★修正: 付け根 → 指先に向かう方向を計算
         const dir = new THREE.Vector3(tipX - baseX, tipY - baseY, tipZ - baseZ).normalize();
         const targetPos = new THREE.Vector3().addVectors(beamGroup.position, dir);
         
