@@ -21,9 +21,7 @@
       color: #fff;
     }
 
-    /* --------------------------------------------------
-       1. スタート（ビーム選択）画面
-    -------------------------------------------------- */
+    /* 1. スタート画面 */
     #start-screen {
       position: absolute;
       top: 0;
@@ -51,13 +49,13 @@
     #start-screen p {
       color: #94a3b8;
       font-size: 14px;
-      margin-bottom: 32px;
+      margin-bottom: 24px;
     }
 
     .select-grid {
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 12px;
       width: 100%;
       max-width: 320px;
     }
@@ -66,8 +64,8 @@
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 16px;
-      padding: 16px;
-      font-size: 16px;
+      padding: 14px 16px;
+      font-size: 15px;
       font-weight: bold;
       color: #fff;
       cursor: pointer;
@@ -77,17 +75,12 @@
       transition: all 0.2s ease;
     }
 
-    .beam-card:active {
-      transform: scale(0.96);
-    }
-
+    .beam-card:active { transform: scale(0.96); }
     .beam-card.red { border-color: #ef4444; box-shadow: 0 0 15px rgba(239, 68, 68, 0.3); }
     .beam-card.blue { border-color: #3b82f6; box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }
     .beam-card.green { border-color: #10b981; box-shadow: 0 0 15px rgba(16, 185, 129, 0.3); }
 
-    /* --------------------------------------------------
-       2. ARカメラ画面
-    -------------------------------------------------- */
+    /* 2. ARカメラ画面 & キャンバス */
     #webcam {
       position: absolute;
       top: 0;
@@ -106,7 +99,16 @@
       width: 100vw;
       height: 100vh;
       z-index: 2;
-      pointer-events: none;
+    }
+
+    #selection-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 3;
+      cursor: crosshair;
     }
 
     #ui-container {
@@ -114,19 +116,20 @@
       bottom: 24px;
       left: 0;
       width: 100%;
-      z-index: 3;
+      z-index: 4;
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 10px;
       padding: 0 16px;
+      pointer-events: none;
     }
 
     .title-tag {
       position: absolute;
       top: 16px;
       left: 16px;
-      z-index: 3;
+      z-index: 4;
       background: rgba(15, 23, 42, 0.7);
       backdrop-filter: blur(10px);
       border: 1px solid rgba(255, 255, 255, 0.2);
@@ -152,21 +155,23 @@
     #status {
       color: #e2e8f0;
       font-size: 13px;
-      background: rgba(0, 0, 0, 0.65);
+      background: rgba(0, 0, 0, 0.75);
       backdrop-filter: blur(8px);
-      padding: 6px 16px;
+      padding: 8px 18px;
       border-radius: 20px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      pointer-events: auto;
     }
 
     .panel {
-      background: rgba(15, 23, 42, 0.8);
+      background: rgba(15, 23, 42, 0.85);
       backdrop-filter: blur(12px);
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 24px;
       padding: 8px;
       display: flex;
       gap: 8px;
+      pointer-events: auto;
     }
 
     button.nav-btn {
@@ -178,6 +183,11 @@
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button.nav-btn.active {
+      background: #3b82f6;
     }
   </style>
 
@@ -187,9 +197,10 @@
 </head>
 <body>
 
+  <!-- 1. スタート画面 -->
   <div id="start-screen">
     <h1>Everyone AR Beam</h1>
-    <p>発射したいビームのタイプを選んでください</p>
+    <p>ビームのタイプを選択してください</p>
     
     <div class="select-grid">
       <div class="beam-card red" onclick="startApp('red')">
@@ -213,10 +224,12 @@
 
   <video id="webcam" autoplay playsinline muted></video>
   <canvas id="canvas3d"></canvas>
+  <canvas id="selection-canvas"></canvas>
 
   <div id="ui-container">
-    <div id="status">カメラを読み込んでいます...</div>
+    <div id="status">カメラ準備中...</div>
     <div class="panel">
+      <button id="mode-btn" class="nav-btn" onclick="toggleMode()">🖱 囲みモード切替</button>
       <button class="nav-btn" onclick="backToMenu()">⚙ ビーム変更</button>
       <button class="nav-btn" onclick="toggleCamera()">📷 カメラ切替</button>
     </div>
@@ -226,9 +239,8 @@
     let currentFacingMode = 'user';
     let cameraInstance = null;
     let activeBeamType = 'red';
-    let audioCtx = null;
-    let beamSoundNode = null;
-    let beamGainNode = null;
+    let trackingMode = 'hand'; // 'hand' または 'custom'
+    let audioCtx = null, beamSoundNode = null, beamGainNode = null;
 
     const beamStyles = {
       red:   { color: 0xff1100, coreColor: 0xffffff, pitch: 300 },
@@ -241,31 +253,23 @@
     const startScreen = document.getElementById('start-screen');
 
     // --------------------------------------------------
-    // Web Audio API (効果音)
+    // オーディオ（効果音）
     // --------------------------------------------------
     function initAudio() {
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
-      }
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
     }
 
     function startBeamSound() {
       initAudio();
       if (beamSoundNode) return;
-
       const style = beamStyles[activeBeamType];
       beamSoundNode = audioCtx.createOscillator();
       beamGainNode = audioCtx.createGain();
-
       beamSoundNode.type = 'sawtooth';
       beamSoundNode.frequency.setValueAtTime(style.pitch, audioCtx.currentTime);
-
       beamGainNode.gain.setValueAtTime(0.01, audioCtx.currentTime);
       beamGainNode.gain.exponentialRampToValueAtTime(0.12, audioCtx.currentTime + 0.1);
-
       beamSoundNode.connect(beamGainNode);
       beamGainNode.connect(audioCtx.destination);
       beamSoundNode.start();
@@ -286,10 +290,10 @@
     }
 
     // --------------------------------------------------
-    // Three.js 3D描画
+    // Three.js (3Dビーム描画)
     // --------------------------------------------------
-    const canvas = document.getElementById('canvas3d');
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    const canvas3d = document.getElementById('canvas3d');
+    const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, alpha: true, antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
@@ -299,22 +303,22 @@
 
     const beamGroup = new THREE.Group();
 
-    // ★修正: オーラ（円柱をZ軸方向へ伸ばす）
-    const outerGeo = new THREE.CylinderGeometry(0.06, 0.015, 10, 16);
-    outerGeo.rotateX(-Math.PI / 2);
-    outerGeo.translate(0, 0, 5);
+    // オーラ
+    const outerGeo = new THREE.CylinderGeometry(0.05, 0.01, 10, 16);
+    outerGeo.rotateX(Math.PI / 2);
+    outerGeo.translate(0, 0, -5); // 奥へ伸ばす
     const outerMat = new THREE.MeshBasicMaterial({ color: 0xff1100, transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending });
     const outerMesh = new THREE.Mesh(outerGeo, outerMat);
 
-    // ★修正: コア（円柱をZ軸方向へ伸ばす）
-    const innerGeo = new THREE.CylinderGeometry(0.025, 0.005, 10, 16);
-    innerGeo.rotateX(-Math.PI / 2);
-    innerGeo.translate(0, 0, 5);
+    // コア
+    const innerGeo = new THREE.CylinderGeometry(0.02, 0.003, 10, 16);
+    innerGeo.rotateX(Math.PI / 2);
+    innerGeo.translate(0, 0, -5);
     const innerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending });
     const innerMesh = new THREE.Mesh(innerGeo, innerMat);
 
     // 発射リング
-    const ringGeo = new THREE.RingGeometry(0.05, 0.1, 16);
+    const ringGeo = new THREE.RingGeometry(0.04, 0.08, 16);
     const ringMat = new THREE.MeshBasicMaterial({ color: 0xff1100, side: THREE.DoubleSide, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
     const ringMesh = new THREE.Mesh(ringGeo, ringMat);
 
@@ -333,7 +337,90 @@
     }
 
     // --------------------------------------------------
-    // MediaPipe Hands (手認識)
+    // ドラッグ選択（指定の場所・物体を囲む機能）
+    // --------------------------------------------------
+    const selectionCanvas = document.getElementById('selection-canvas');
+    const ctxSelect = selectionCanvas.getContext('2d');
+    selectionCanvas.width = window.innerWidth;
+    selectionCanvas.height = window.innerHeight;
+
+    let isDrawing = false;
+    let pathPoints = [];
+    let customTargetPos = null;
+
+    selectionCanvas.addEventListener('mousedown', startDraw);
+    selectionCanvas.addEventListener('mousemove', draw);
+    selectionCanvas.addEventListener('mouseup', endDraw);
+    selectionCanvas.addEventListener('touchstart', (e) => startDraw(e.touches[0]));
+    selectionCanvas.addEventListener('touchmove', (e) => draw(e.touches[0]));
+    selectionCanvas.addEventListener('touchend', endDraw);
+
+    function startDraw(e) {
+      if (trackingMode !== 'custom') return;
+      isDrawing = true;
+      pathPoints = [{ x: e.clientX, y: e.clientY }];
+    }
+
+    function draw(e) {
+      if (!isDrawing || trackingMode !== 'custom') return;
+      pathPoints.push({ x: e.clientX, y: e.clientY });
+
+      ctxSelect.clearRect(0, 0, selectionCanvas.width, selectionCanvas.height);
+      ctxSelect.strokeStyle = '#60a5fa';
+      ctxSelect.lineWidth = 3;
+      ctxSelect.setLineDash([6, 6]);
+      ctxSelect.beginPath();
+      ctxSelect.moveTo(pathPoints[0].x, pathPoints[0].y);
+      for (let i = 1; i < pathPoints.length; i++) {
+        ctxSelect.lineTo(pathPoints[i].x, pathPoints[i].y);
+      }
+      ctxSelect.stroke();
+    }
+
+    function endDraw() {
+      if (!isDrawing || trackingMode !== 'custom') return;
+      isDrawing = false;
+      ctxSelect.clearRect(0, 0, selectionCanvas.width, selectionCanvas.height);
+
+      if (pathPoints.length > 3) {
+        let sumX = 0, sumY = 0;
+        pathPoints.forEach(p => { sumX += p.x; sumY += p.y; });
+        const avgX = sumX / pathPoints.length;
+        const avgY = sumY / pathPoints.length;
+
+        // 2D画面座標から3D世界座標への変換
+        const normX = (avgX / window.innerWidth) * 2 - 1;
+        const normY = -(avgY / window.innerHeight) * 2 + 1;
+        const aspect = window.innerWidth / window.innerHeight;
+
+        customTargetPos = {
+          x: normX * 2 * aspect,
+          y: normY * 2,
+          z: -1
+        };
+
+        statusEl.textContent = '🎯 指定オブジェクトからビーム照射中！';
+      }
+    }
+
+    function toggleMode() {
+      trackingMode = (trackingMode === 'hand') ? 'custom' : 'hand';
+      const modeBtn = document.getElementById('mode-btn');
+      
+      if (trackingMode === 'custom') {
+        modeBtn.classList.add('active');
+        statusEl.textContent = '画面上の出したい物をマウスや指で「丸く囲んで」ください';
+        beamGroup.visible = false;
+        stopBeamSound();
+      } else {
+        modeBtn.classList.remove('active');
+        customTargetPos = null;
+        statusEl.textContent = '手の認識モード（指先を探しています）';
+      }
+    }
+
+    // --------------------------------------------------
+    // MediaPipe Hands (手認識) & 位置計算
     // --------------------------------------------------
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
@@ -347,46 +434,61 @@
     });
 
     hands.onResults((results) => {
+      // 囲みモードの場合の描画処理
+      if (trackingMode === 'custom') {
+        if (customTargetPos) {
+          beamGroup.position.set(customTargetPos.x, customTargetPos.y, customTargetPos.z);
+          beamGroup.lookAt(customTargetPos.x, customTargetPos.y, customTargetPos.z - 10);
+          beamGroup.visible = true;
+          startBeamSound();
+        }
+        return;
+      }
+
+      // 手認識モードの場合
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         statusEl.textContent = '指先を認識中 ⚡ (ビーム発射中)';
         const landmarks = results.multiHandLandmarks[0];
 
-        // 8番: 人差し指先端, 5番: 人差し指付け根
+        // 8: 人差し指先端, 6: 人差し指第二関節
         const tip = landmarks[8];
-        const base = landmarks[5];
+        const dip = landmarks[6];
 
         const isUser = (currentFacingMode === 'user');
         const rawTipX = isUser ? (1 - tip.x) : tip.x;
-        const rawBaseX = isUser ? (1 - base.x) : base.x;
+        const rawDipX = isUser ? (1 - dip.x) : dip.x;
 
         const aspect = window.innerWidth / window.innerHeight;
+        
+        // 指先（発射起点）
         const tipX = (rawTipX - 0.5) * 4 * aspect;
         const tipY = (0.5 - tip.y) * 4;
         const tipZ = -tip.z * 4;
 
-        const baseX = (rawBaseX - 0.5) * 4 * aspect;
-        const baseY = (0.5 - base.y) * 4;
-        const baseZ = -base.z * 4;
+        // 関節（方向判定用）
+        const dipX = (rawDipX - 0.5) * 4 * aspect;
+        const dipY = (0.5 - dip.y) * 4;
+        const dipZ = -dip.z * 4;
 
+        // 指先を起点にセット
         beamGroup.position.set(tipX, tipY, tipZ);
 
-        // ★修正: 付け根 → 指先に向かう方向を計算
-        const dir = new THREE.Vector3(tipX - baseX, tipY - baseY, tipZ - baseZ).normalize();
+        // 関節 → 指先 のベクトル方向へビームを正しく向ける
+        const dir = new THREE.Vector3(tipX - dipX, tipY - dipY, tipZ - dipZ).normalize();
         const targetPos = new THREE.Vector3().addVectors(beamGroup.position, dir);
-        
         beamGroup.lookAt(targetPos);
 
         beamGroup.visible = true;
         startBeamSound();
       } else {
-        statusEl.textContent = 'カメラに手をかざしてください';
+        statusEl.textContent = 'カメラに手をかざすか、囲みモードをお試しください';
         beamGroup.visible = false;
         stopBeamSound();
       }
     });
 
     // --------------------------------------------------
-    // アプリ・カメラ制御フロー
+    // UI / アプリ制御
     // --------------------------------------------------
     function startApp(beamType) {
       applyBeamStyle(beamType);
@@ -404,7 +506,6 @@
 
     function startCamera(facingMode) {
       if (cameraInstance) cameraInstance.stop();
-
       videoElement.style.transform = (facingMode === 'user') ? 'scaleX(-1)' : 'scaleX(1)';
 
       cameraInstance = new Camera(videoElement, {
@@ -417,7 +518,7 @@
       });
 
       cameraInstance.start().then(() => {
-        statusEl.textContent = 'カメラ準備完了！手をかざしてください';
+        statusEl.textContent = 'カメラ準備完了！手をかざすか囲みモードを選択してください';
       }).catch((err) => {
         statusEl.textContent = 'カメラ読込失敗: ' + err.message;
       });
@@ -428,7 +529,6 @@
       startCamera(currentFacingMode);
     }
 
-    // レンダリングループ
     function animate() {
       requestAnimationFrame(animate);
       if (beamGroup.visible) {
@@ -444,6 +544,8 @@
       camera3d.aspect = window.innerWidth / window.innerHeight;
       camera3d.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      selectionCanvas.width = window.innerWidth;
+      selectionCanvas.height = window.innerHeight;
     });
   </script>
 </body>
