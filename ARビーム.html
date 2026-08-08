@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>だれでもARビーム - Anyone AR Beam</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    /* カメラ映像（背景） */
+    #webcam {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      z-index: 1;
+      transform: scaleX(-1); /* 初期設定：インカメラ用に鏡合わせ */
+    }
+
+    /* 3D描画用Canvas */
+    #canvas3d {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    /* UIレイヤー */
+    #ui-container {
+      position: absolute;
+      bottom: 24px;
+      left: 0;
+      width: 100%;
+      z-index: 3;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 0 16px;
+    }
+
+    /* アプリタイトルタグ */
+    .title-tag {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 3;
+      background: rgba(15, 23, 42, 0.7);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #fff;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .title-tag span {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background-color: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #10b981;
+    }
+
+    /* トラッキング状態インジケーター */
+    #status {
+      color: #e2e8f0;
+      font-size: 13px;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(8px);
+      padding: 6px 16px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    /* コントロールパネル */
+    .panel {
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 24px;
+      padding: 8px;
+      display: flex;
+      gap: 8px;
+      max-width: 100%;
+      overflow-x: auto;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    button {
+      background: rgba(255, 255, 255, 0.08);
+      color: #f8fafc;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      padding: 10px 18px;
+      border-radius: 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    button:active {
+      transform: scale(0.94);
+    }
+
+    button.active {
+      background: #2563eb;
+      border-color: #60a5fa;
+      color: #ffffff;
+      box-shadow: 0 0 16px rgba(37, 99, 235, 0.7);
+    }
+
+    .icon-btn {
+      padding: 10px 14px;
+    }
+  </style>
+
+  <!-- ライブラリの読み込み -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+  <!-- アプリタイトル -->
+  <div class="title-tag">
+    <span></span> だれでもARビーム
+  </div>
+
+  <!-- カメラ映像 -->
+  <video id="webcam" autoplay playsinline muted></video>
+  
+  <!-- 3D描画Canvas -->
+  <canvas id="canvas3d"></canvas>
+
+  <!-- 操作UI -->
+  <div id="ui-container">
+    <div id="status">カメラを読み込んでいます...</div>
+    
+    <div class="panel">
+      <button id="btn-red" class="active" onclick="selectBeam('red')">🔴 レッドレーザー</button>
+      <button id="btn-blue" onclick="selectBeam('blue')">⚡ プラズマブルー</button>
+      <button id="btn-green" onclick="selectBeam('green')">🟢 プラズマグリーン</button>
+      <button id="btn-sound" class="icon-btn" onclick="toggleSound()">🔊 効果音 ON</button>
+      <button class="icon-btn" onclick="toggleCamera()">📷 カメラ切替</button>
+    </div>
+  </div>
+
+  <script>
+    // --------------------------------------------------
+    // 状態管理 & 変数宣言
+    // --------------------------------------------------
+    let currentFacingMode = 'user'; // 'user' (インカメラ) または 'environment' (アウトカメラ)
+    let cameraInstance = null;
+    let activeBeamType = 'red';
+    let soundEnabled = true;
+
+    // Web Audio API による効果音合成
+    let audioCtx = null;
+    let beamSoundNode = null;
+    let beamGainNode = null;
+
+    const beamStyles = {
+      red:   { color: 0xff1100, coreColor: 0xffffff, radius: 0.06, pitch: 300 },
+      blue:  { color: 0x00d2ff, coreColor: 0xe0ffff, radius: 0.08, pitch: 450 },
+      green: { color: 0x00ff66, coreColor: 0xffffff, radius: 0.05, pitch: 220 }
+    };
+
+    const statusEl = document.getElementById('status');
+    const videoElement = document.getElementById('webcam');
+
+    // --------------------------------------------------
+    // 1. Web Audio API（効果音システム）
+    // --------------------------------------------------
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function startBeamSound() {
+      if (!soundEnabled) return;
+      initAudio();
+      if (beamSoundNode) return;
+
+      const style = beamStyles[activeBeamType];
+      
+      beamSoundNode = audioCtx.createOscillator();
+      beamGainNode = audioCtx.createGain();
+
+      beamSoundNode.type = 'sawtooth';
+      beamSoundNode.frequency.setValueAtTime(style.pitch, audioCtx.currentTime);
+
+      beamGainNode.gain.setValueAtTime(0.01, audioCtx.currentTime);
+      beamGainNode.gain.exponentialRampToValueAtTime(0.15, audioCtx.currentTime + 0.1);
+
+      beamSoundNode.connect(beamGainNode);
+      beamGainNode.connect(audioCtx.destination);
+      beamSoundNode.start();
+    }
+
+    function stopBeamSound() {
+      if (beamSoundNode && beamGainNode) {
+        beamGainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+        setTimeout(() => {
+          if (beamSoundNode) {
+            beamSoundNode.stop();
+            beamSoundNode.disconnect();
+            beamSoundNode = null;
+            beamGainNode = null;
+          }
+        }, 100);
+      }
+    }
+
+    function toggleSound() {
+      soundEnabled = !soundEnabled;
+      const btn = document.getElementById('btn-sound');
+      if (soundEnabled) {
+        btn.textContent = '🔊 効果音 ON';
+        btn.style.opacity = '1';
+      } else {
+        btn.textContent = '🔇 効果音 OFF';
+        btn.style.opacity = '0.6';
+        stopBeamSound();
+      }
+    }
+
+    // --------------------------------------------------
+    // 2. Three.js（3D空間 & ビームVFX）の初期化
+    // --------------------------------------------------
+    const canvas = document.getElementById('canvas3d');
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    const scene = new THREE.Scene();
+    const camera3d = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera3d.position.z = 5;
+
+    const beamGroup = new THREE.Group();
+
+    // 外側のオーラ（発光体）
+    const outerGeo = new THREE.CylinderGeometry(0.06, 0.015, 10, 16);
+    outerGeo.rotateX(Math.PI / 2);
+    outerGeo.translate(0, 0, -5);
+    const outerMat = new THREE.MeshBasicMaterial({
+      color: beamStyles.red.color,
+      transparent: true,
+      opacity: 0.65,
+      blending: THREE.AdditiveBlending
+    });
+    const outerMesh = new THREE.Mesh(outerGeo, outerMat);
+
+    // 内側の高輝度コア（白い芯）
+    const innerGeo = new THREE.CylinderGeometry(0.025, 0.005, 10, 16);
+    innerGeo.rotateX(Math.PI / 2);
+    innerGeo.translate(0, 0, -5);
+    const innerMat = new THREE.MeshBasicMaterial({
+      color: beamStyles.red.coreColor,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending
+    });
+    const innerMesh = new THREE.Mesh(innerGeo, innerMat);
+
+    // 指先の発射リング（衝撃波）
+    const ringGeo = new THREE.RingGeometry(0.05, 0.1, 16);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: beamStyles.red.color,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.8,
+      blending: THREE.AdditiveBlending
+    });
+    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+    ringMesh.position.z = 0;
+
+    beamGroup.add(outerMesh);
+    beamGroup.add(innerMesh);
+    beamGroup.add(ringMesh);
+    beamGroup.visible = false;
+    scene.add(beamGroup);
+
+    // --------------------------------------------------
+    // 3. ビーム切替処理
+    // --------------------------------------------------
+    function selectBeam(type) {
+      activeBeamType = type;
+      const style = beamStyles[type];
+
+      outerMat.color.setHex(style.color);
+      innerMat.color.setHex(style.coreColor);
+      ringMat.color.setHex(style.color);
+
+      document.querySelectorAll('.panel button').forEach(btn => {
+        if (btn.id.startsWith('btn-')) btn.classList.remove('active');
+      });
+      document.getElementById(`btn-${type}`).classList.add('active');
+
+      if (beamSoundNode) {
+        stopBeamSound();
+        startBeamSound();
+      }
+    }
+
+    // --------------------------------------------------
+    // 4. MediaPipe Hands（骨格検出 & 指先追従）
+    // --------------------------------------------------
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.6
+    });
+
+    hands.onResults((results) => {
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        statusEl.textContent = '指先を認識中 ⚡ (ビーム発射中)';
+        const landmarks = results.multiHandLandmarks[0];
+
+        // 8番: 人差し指先端 (Index Tip), 5番: 人差し指付け根 (Index MCP)
+        const tip = landmarks[8];
+        const base = landmarks[5];
+
+        const isUser = (currentFacingMode === 'user');
+        const rawTipX = isUser ? (1 - tip.x) : tip.x;
+        const rawBaseX = isUser ? (1 - base.x) : base.x;
+
+        const aspect = window.innerWidth / window.innerHeight;
+        const tipX = (rawTipX - 0.5) * 4 * aspect;
+        const tipY = (0.5 - tip.y) * 4;
+        const tipZ = -tip.z * 4;
+
+        const baseX = (rawBaseX - 0.5) * 4 * aspect;
+        const baseY = (0.5 - base.y) * 4;
+        const baseZ = -base.z * 4;
+
+        beamGroup.position.set(tipX, tipY, tipZ);
+
+        const dir = new THREE.Vector3(tipX - baseX, tipY - baseY, tipZ - baseZ).normalize();
+        const targetPos = new THREE.Vector3().addVectors(beamGroup.position, dir);
+        beamGroup.lookAt(targetPos);
+
+        beamGroup.visible = true;
+        startBeamSound();
+
+      } else {
+        statusEl.textContent = 'カメラに手をかざしてください';
+        beamGroup.visible = false;
+        stopBeamSound();
+      }
+    });
+
+    // --------------------------------------------------
+    // 5. カメラ制御（起動・イン/アウト切替）
+    // --------------------------------------------------
+    function startCamera(facingMode) {
+      if (cameraInstance) {
+        cameraInstance.stop();
+      }
+
+      videoElement.style.transform = (facingMode === 'user') ? 'scaleX(-1)' : 'scaleX(1)';
+
+      cameraInstance = new Camera(videoElement, {
+        onFrame: async () => {
+          await hands.send({ image: videoElement });
+        },
+        width: 1280,
+        height: 720,
+        facingMode: facingMode
+      });
+
+      cameraInstance.start().then(() => {
+        statusEl.textContent = 'カメラ準備完了！手をかざしてください';
+      }).catch((err) => {
+        statusEl.textContent = 'カメラの読み込みに失敗しました: ' + err.message;
+      });
+    }
+
+    function toggleCamera() {
+      currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
+      startCamera(currentFacingMode);
+    }
+
+    startCamera(currentFacingMode);
+
+    window.addEventListener('pointerdown', () => {
+      initAudio();
+    }, { once: true });
+
+    // --------------------------------------------------
+    // 6. アニメーション & リサイズ処理
+    // --------------------------------------------------
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (beamGroup.visible) {
+        const time = Date.now() * 0.015;
+        outerMat.opacity = 0.5 + Math.sin(time) * 0.2;
+        ringMesh.rotation.z += 0.05;
+        ringMesh.scale.setScalar(1 + Math.sin(time * 2) * 0.15);
+      }
+
+      renderer.render(scene, camera3d);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+
+      camera3d.aspect = width / height;
+      camera3d.updateProjectionMatrix();
+
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    });
+  </script>
+</body>
+</html>
