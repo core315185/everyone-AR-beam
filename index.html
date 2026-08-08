@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>だれでもARビーム - Anyone AR Beam</title>
+  <title>Everyone AR Beam</title>
   <style>
     * {
       box-sizing: border-box;
@@ -16,11 +16,78 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background-color: #000;
+      background-color: #0f172a;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #fff;
     }
 
-    /* カメラ映像（背景） */
+    /* --------------------------------------------------
+       1. スタート（ビーム選択）画面
+    -------------------------------------------------- */
+    #start-screen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%);
+      padding: 24px;
+      text-align: center;
+    }
+
+    #start-screen h1 {
+      font-size: 28px;
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, #60a5fa, #a855f7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    #start-screen p {
+      color: #94a3b8;
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+
+    .select-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      width: 100%;
+      max-width: 320px;
+    }
+
+    .beam-card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      padding: 16px;
+      font-size: 16px;
+      font-weight: bold;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.2s ease;
+    }
+
+    .beam-card:active {
+      transform: scale(0.96);
+    }
+
+    .beam-card.red { border-color: #ef4444; box-shadow: 0 0 15px rgba(239, 68, 68, 0.3); }
+    .beam-card.blue { border-color: #3b82f6; box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }
+    .beam-card.green { border-color: #10b981; box-shadow: 0 0 15px rgba(16, 185, 129, 0.3); }
+
+    /* --------------------------------------------------
+       2. ARカメラ画面
+    -------------------------------------------------- */
     #webcam {
       position: absolute;
       top: 0;
@@ -29,10 +96,9 @@
       height: 100vh;
       object-fit: cover;
       z-index: 1;
-      transform: scaleX(-1); /* 初期設定：インカメラ用に鏡合わせ */
+      transform: scaleX(-1);
     }
 
-    /* 3D描画用Canvas */
     #canvas3d {
       position: absolute;
       top: 0;
@@ -43,7 +109,6 @@
       pointer-events: none;
     }
 
-    /* UIレイヤー */
     #ui-container {
       position: absolute;
       bottom: 24px;
@@ -57,7 +122,6 @@
       padding: 0 16px;
     }
 
-    /* アプリタイトルタグ */
     .title-tag {
       position: absolute;
       top: 16px;
@@ -75,6 +139,7 @@
       align-items: center;
       gap: 6px;
     }
+
     .title-tag span {
       display: inline-block;
       width: 8px;
@@ -84,7 +149,6 @@
       box-shadow: 0 0 8px #10b981;
     }
 
-    /* トラッキング状態インジケーター */
     #status {
       color: #e2e8f0;
       font-size: 13px;
@@ -93,10 +157,8 @@
       padding: 6px 16px;
       border-radius: 20px;
       border: 1px solid rgba(255, 255, 255, 0.1);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     }
 
-    /* コントロールパネル */
     .panel {
       background: rgba(15, 23, 42, 0.8);
       backdrop-filter: blur(12px);
@@ -105,99 +167,81 @@
       padding: 8px;
       display: flex;
       gap: 8px;
-      max-width: 100%;
-      overflow-x: auto;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
     }
 
-    button {
-      background: rgba(255, 255, 255, 0.08);
-      color: #f8fafc;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      padding: 10px 18px;
+    button.nav-btn {
+      background: rgba(255, 255, 255, 0.18);
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
       border-radius: 16px;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-      white-space: nowrap;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    button:active {
-      transform: scale(0.94);
-    }
-
-    button.active {
-      background: #2563eb;
-      border-color: #60a5fa;
-      color: #ffffff;
-      box-shadow: 0 0 16px rgba(37, 99, 235, 0.7);
-    }
-
-    .icon-btn {
-      padding: 10px 14px;
     }
   </style>
 
-  <!-- ライブラリの読み込み -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
-  <!-- アプリタイトル -->
-  <div class="title-tag">
-    <span></span> だれでもARビーム
+  <div id="start-screen">
+    <h1>Everyone AR Beam</h1>
+    <p>発射したいビームのタイプを選んでください</p>
+    
+    <div class="select-grid">
+      <div class="beam-card red" onclick="startApp('red')">
+        <span>🔴 レッドレーザー</span>
+        <span>▶</span>
+      </div>
+      <div class="beam-card blue" onclick="startApp('blue')">
+        <span>⚡ プラズマブルー</span>
+        <span>▶</span>
+      </div>
+      <div class="beam-card green" onclick="startApp('green')">
+        <span>🟢 プラズマグリーン</span>
+        <span>▶</span>
+      </div>
+    </div>
   </div>
 
-  <!-- カメラ映像 -->
+  <div class="title-tag">
+    <span></span> ARビーム実行中
+  </div>
+
   <video id="webcam" autoplay playsinline muted></video>
-  
-  <!-- 3D描画Canvas -->
   <canvas id="canvas3d"></canvas>
 
-  <!-- 操作UI -->
   <div id="ui-container">
     <div id="status">カメラを読み込んでいます...</div>
-    
     <div class="panel">
-      <button id="btn-red" class="active" onclick="selectBeam('red')">🔴 レッドレーザー</button>
-      <button id="btn-blue" onclick="selectBeam('blue')">⚡ プラズマブルー</button>
-      <button id="btn-green" onclick="selectBeam('green')">🟢 プラズマグリーン</button>
-      <button id="btn-sound" class="icon-btn" onclick="toggleSound()">🔊 効果音 ON</button>
-      <button class="icon-btn" onclick="toggleCamera()">📷 カメラ切替</button>
+      <button class="nav-btn" onclick="backToMenu()">⚙ ビーム変更</button>
+      <button class="nav-btn" onclick="toggleCamera()">📷 カメラ切替</button>
     </div>
   </div>
 
   <script>
-    // --------------------------------------------------
-    // 状態管理 & 変数宣言
-    // --------------------------------------------------
-    let currentFacingMode = 'user'; // 'user' (インカメラ) または 'environment' (アウトカメラ)
+    let currentFacingMode = 'user';
     let cameraInstance = null;
     let activeBeamType = 'red';
-    let soundEnabled = true;
-
-    // Web Audio API による効果音合成
     let audioCtx = null;
     let beamSoundNode = null;
     let beamGainNode = null;
 
     const beamStyles = {
-      red:   { color: 0xff1100, coreColor: 0xffffff, radius: 0.06, pitch: 300 },
-      blue:  { color: 0x00d2ff, coreColor: 0xe0ffff, radius: 0.08, pitch: 450 },
-      green: { color: 0x00ff66, coreColor: 0xffffff, radius: 0.05, pitch: 220 }
+      red:   { color: 0xff1100, coreColor: 0xffffff, pitch: 300 },
+      blue:  { color: 0x00d2ff, coreColor: 0xe0ffff, pitch: 450 },
+      green: { color: 0x00ff66, coreColor: 0xffffff, pitch: 220 }
     };
 
     const statusEl = document.getElementById('status');
     const videoElement = document.getElementById('webcam');
+    const startScreen = document.getElementById('start-screen');
 
     // --------------------------------------------------
-    // 1. Web Audio API（効果音システム）
+    // Web Audio API (効果音)
     // --------------------------------------------------
     function initAudio() {
       if (!audioCtx) {
@@ -209,12 +253,10 @@
     }
 
     function startBeamSound() {
-      if (!soundEnabled) return;
       initAudio();
       if (beamSoundNode) return;
 
       const style = beamStyles[activeBeamType];
-      
       beamSoundNode = audioCtx.createOscillator();
       beamGainNode = audioCtx.createGain();
 
@@ -222,7 +264,7 @@
       beamSoundNode.frequency.setValueAtTime(style.pitch, audioCtx.currentTime);
 
       beamGainNode.gain.setValueAtTime(0.01, audioCtx.currentTime);
-      beamGainNode.gain.exponentialRampToValueAtTime(0.15, audioCtx.currentTime + 0.1);
+      beamGainNode.gain.exponentialRampToValueAtTime(0.12, audioCtx.currentTime + 0.1);
 
       beamSoundNode.connect(beamGainNode);
       beamGainNode.connect(audioCtx.destination);
@@ -243,21 +285,8 @@
       }
     }
 
-    function toggleSound() {
-      soundEnabled = !soundEnabled;
-      const btn = document.getElementById('btn-sound');
-      if (soundEnabled) {
-        btn.textContent = '🔊 効果音 ON';
-        btn.style.opacity = '1';
-      } else {
-        btn.textContent = '🔇 効果音 OFF';
-        btn.style.opacity = '0.6';
-        stopBeamSound();
-      }
-    }
-
     // --------------------------------------------------
-    // 2. Three.js（3D空間 & ビームVFX）の初期化
+    // Three.js 3D描画
     // --------------------------------------------------
     const canvas = document.getElementById('canvas3d');
     const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
@@ -270,41 +299,24 @@
 
     const beamGroup = new THREE.Group();
 
-    // 外側のオーラ（発光体）
+    // オーラ
     const outerGeo = new THREE.CylinderGeometry(0.06, 0.015, 10, 16);
     outerGeo.rotateX(Math.PI / 2);
     outerGeo.translate(0, 0, -5);
-    const outerMat = new THREE.MeshBasicMaterial({
-      color: beamStyles.red.color,
-      transparent: true,
-      opacity: 0.65,
-      blending: THREE.AdditiveBlending
-    });
+    const outerMat = new THREE.MeshBasicMaterial({ color: 0xff1100, transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending });
     const outerMesh = new THREE.Mesh(outerGeo, outerMat);
 
-    // 内側の高輝度コア（白い芯）
+    // コア
     const innerGeo = new THREE.CylinderGeometry(0.025, 0.005, 10, 16);
     innerGeo.rotateX(Math.PI / 2);
     innerGeo.translate(0, 0, -5);
-    const innerMat = new THREE.MeshBasicMaterial({
-      color: beamStyles.red.coreColor,
-      transparent: true,
-      opacity: 0.95,
-      blending: THREE.AdditiveBlending
-    });
+    const innerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending });
     const innerMesh = new THREE.Mesh(innerGeo, innerMat);
 
-    // 指先の発射リング（衝撃波）
+    // 発射リング
     const ringGeo = new THREE.RingGeometry(0.05, 0.1, 16);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: beamStyles.red.color,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.8,
-      blending: THREE.AdditiveBlending
-    });
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xff1100, side: THREE.DoubleSide, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
     const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-    ringMesh.position.z = 0;
 
     beamGroup.add(outerMesh);
     beamGroup.add(innerMesh);
@@ -312,30 +324,16 @@
     beamGroup.visible = false;
     scene.add(beamGroup);
 
-    // --------------------------------------------------
-    // 3. ビーム切替処理
-    // --------------------------------------------------
-    function selectBeam(type) {
+    function applyBeamStyle(type) {
       activeBeamType = type;
       const style = beamStyles[type];
-
       outerMat.color.setHex(style.color);
       innerMat.color.setHex(style.coreColor);
       ringMat.color.setHex(style.color);
-
-      document.querySelectorAll('.panel button').forEach(btn => {
-        if (btn.id.startsWith('btn-')) btn.classList.remove('active');
-      });
-      document.getElementById(`btn-${type}`).classList.add('active');
-
-      if (beamSoundNode) {
-        stopBeamSound();
-        startBeamSound();
-      }
     }
 
     // --------------------------------------------------
-    // 4. MediaPipe Hands（骨格検出 & 指先追従）
+    // MediaPipe Hands (手認識)
     // --------------------------------------------------
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
@@ -353,7 +351,7 @@
         statusEl.textContent = '指先を認識中 ⚡ (ビーム発射中)';
         const landmarks = results.multiHandLandmarks[0];
 
-        // 8番: 人差し指先端 (Index Tip), 5番: 人差し指付け根 (Index MCP)
+        // 8番: 人差し指先端, 5番: 人差し指付け根
         const tip = landmarks[8];
         const base = landmarks[5];
 
@@ -372,13 +370,14 @@
 
         beamGroup.position.set(tipX, tipY, tipZ);
 
+        // ★ ビームの向きを反転修正（付け根 → 指先 の前方向へ飛ばす）
         const dir = new THREE.Vector3(tipX - baseX, tipY - baseY, tipZ - baseZ).normalize();
         const targetPos = new THREE.Vector3().addVectors(beamGroup.position, dir);
+        
         beamGroup.lookAt(targetPos);
 
         beamGroup.visible = true;
         startBeamSound();
-
       } else {
         statusEl.textContent = 'カメラに手をかざしてください';
         beamGroup.visible = false;
@@ -387,12 +386,24 @@
     });
 
     // --------------------------------------------------
-    // 5. カメラ制御（起動・イン/アウト切替）
+    // アプリ・カメラ制御フロー
     // --------------------------------------------------
+    function startApp(beamType) {
+      applyBeamStyle(beamType);
+      startScreen.style.display = 'none';
+      initAudio();
+      startCamera(currentFacingMode);
+    }
+
+    function backToMenu() {
+      if (cameraInstance) cameraInstance.stop();
+      beamGroup.visible = false;
+      stopBeamSound();
+      startScreen.style.display = 'flex';
+    }
+
     function startCamera(facingMode) {
-      if (cameraInstance) {
-        cameraInstance.stop();
-      }
+      if (cameraInstance) cameraInstance.stop();
 
       videoElement.style.transform = (facingMode === 'user') ? 'scaleX(-1)' : 'scaleX(1)';
 
@@ -408,7 +419,7 @@
       cameraInstance.start().then(() => {
         statusEl.textContent = 'カメラ準備完了！手をかざしてください';
       }).catch((err) => {
-        statusEl.textContent = 'カメラの読み込みに失敗しました: ' + err.message;
+        statusEl.textContent = 'カメラ読込失敗: ' + err.message;
       });
     }
 
@@ -417,38 +428,22 @@
       startCamera(currentFacingMode);
     }
 
-    startCamera(currentFacingMode);
-
-    window.addEventListener('pointerdown', () => {
-      initAudio();
-    }, { once: true });
-
-    // --------------------------------------------------
-    // 6. アニメーション & リサイズ処理
-    // --------------------------------------------------
+    // レンダリングループ
     function animate() {
       requestAnimationFrame(animate);
-
       if (beamGroup.visible) {
         const time = Date.now() * 0.015;
         outerMat.opacity = 0.5 + Math.sin(time) * 0.2;
         ringMesh.rotation.z += 0.05;
-        ringMesh.scale.setScalar(1 + Math.sin(time * 2) * 0.15);
       }
-
       renderer.render(scene, camera3d);
     }
     animate();
 
     window.addEventListener('resize', () => {
-      const width = window.innerWidth;
-      const height = window.innerHeight;
-
-      camera3d.aspect = width / height;
+      camera3d.aspect = window.innerWidth / window.innerHeight;
       camera3d.updateProjectionMatrix();
-
-      renderer.setSize(width, height);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
     });
   </script>
 </body>
