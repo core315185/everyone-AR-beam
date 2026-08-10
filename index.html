@@ -21,7 +21,6 @@
       color: #fff;
     }
 
-    /* 1. スタート画面 */
     #start-screen {
       position: absolute;
       top: 0;
@@ -80,7 +79,6 @@
     .beam-card.blue { border-color: #3b82f6; box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }
     .beam-card.green { border-color: #10b981; box-shadow: 0 0 15px rgba(16, 185, 129, 0.3); }
 
-    /* 2. ARカメラ画面 & キャンバス */
     #webcam {
       position: absolute;
       top: 0;
@@ -172,13 +170,15 @@
       display: flex;
       gap: 8px;
       pointer-events: auto;
+      flex-wrap: wrap;
+      justify-content: center;
     }
 
     button.nav-btn {
       background: rgba(255, 255, 255, 0.18);
       color: #fff;
       border: none;
-      padding: 8px 16px;
+      padding: 8px 14px;
       border-radius: 16px;
       font-size: 13px;
       font-weight: 600;
@@ -197,7 +197,6 @@
 </head>
 <body>
 
-  <!-- 1. スタート画面 -->
   <div id="start-screen">
     <h1>Everyone AR Beam</h1>
     <p>ビームのタイプを選択してください</p>
@@ -219,7 +218,7 @@
   </div>
 
   <div class="title-tag">
-    <span></span> ARビーム実行中
+    <span></span> ARマルチビーム実行中
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
@@ -230,6 +229,7 @@
     <div id="status">カメラ準備中...</div>
     <div class="panel">
       <button id="mode-btn" class="nav-btn" onclick="toggleMode()">🖱 囲みモード切替</button>
+      <button id="clear-btn" class="nav-btn" style="display:none;" onclick="clearCustomTargets()">🗑 囲みリセット</button>
       <button class="nav-btn" onclick="backToMenu()">⚙ ビーム変更</button>
       <button class="nav-btn" onclick="toggleCamera()">📷 カメラ切替</button>
     </div>
@@ -239,8 +239,11 @@
     let currentFacingMode = 'user';
     let cameraInstance = null;
     let activeBeamType = 'red';
-    let trackingMode = 'hand'; // 'hand' または 'custom'
+    let trackingMode = 'hand';
     let audioCtx = null, beamSoundNode = null, beamGainNode = null;
+
+    const MAX_BEAMS = 10;
+    const beamPool = [];
 
     const beamStyles = {
       red:   { color: 0xff1100, coreColor: 0xffffff, pitch: 300 },
@@ -290,7 +293,7 @@
     }
 
     // --------------------------------------------------
-    // Three.js (3Dビーム描画)
+    // Three.js (複数ビームの生成と管理)
     // --------------------------------------------------
     const canvas3d = document.getElementById('canvas3d');
     const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, alpha: true, antialias: true });
@@ -301,43 +304,55 @@
     const camera3d = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera3d.position.z = 5;
 
-    const beamGroup = new THREE.Group();
+    function createSingleBeamGroup() {
+      const group = new THREE.Group();
 
-    // オーラ
-    const outerGeo = new THREE.CylinderGeometry(0.05, 0.01, 10, 16);
-    outerGeo.rotateX(Math.PI / 2);
-    outerGeo.translate(0, 0, -5); // 奥へ伸ばす
-    const outerMat = new THREE.MeshBasicMaterial({ color: 0xff1100, transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending });
-    const outerMesh = new THREE.Mesh(outerGeo, outerMat);
+      const outerGeo = new THREE.CylinderGeometry(0.04, 0.008, 10, 16);
+      outerGeo.rotateX(Math.PI / 2);
+      outerGeo.translate(0, 0, -5);
+      const outerMat = new THREE.MeshBasicMaterial({ color: 0xff1100, transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending });
+      const outerMesh = new THREE.Mesh(outerGeo, outerMat);
 
-    // コア
-    const innerGeo = new THREE.CylinderGeometry(0.02, 0.003, 10, 16);
-    innerGeo.rotateX(Math.PI / 2);
-    innerGeo.translate(0, 0, -5);
-    const innerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending });
-    const innerMesh = new THREE.Mesh(innerGeo, innerMat);
+      const innerGeo = new THREE.CylinderGeometry(0.015, 0.003, 10, 16);
+      innerGeo.rotateX(Math.PI / 2);
+      innerGeo.translate(0, 0, -5);
+      const innerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending });
+      const innerMesh = new THREE.Mesh(innerGeo, innerMat);
 
-    // 発射リング
-    const ringGeo = new THREE.RingGeometry(0.04, 0.08, 16);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0xff1100, side: THREE.DoubleSide, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
-    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+      const ringGeo = new THREE.RingGeometry(0.03, 0.06, 16);
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0xff1100, side: THREE.DoubleSide, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
+      const ringMesh = new THREE.Mesh(ringGeo, ringMat);
 
-    beamGroup.add(outerMesh);
-    beamGroup.add(innerMesh);
-    beamGroup.add(ringMesh);
-    beamGroup.visible = false;
-    scene.add(beamGroup);
+      group.add(outerMesh);
+      group.add(innerMesh);
+      group.add(ringMesh);
+      group.visible = false;
+
+      return { group, outerMat, innerMat, ringMat, ringMesh };
+    }
+
+    for (let i = 0; i < MAX_BEAMS; i++) {
+      const beamObj = createSingleBeamGroup();
+      beamPool.push(beamObj);
+      scene.add(beamObj.group);
+    }
 
     function applyBeamStyle(type) {
       activeBeamType = type;
       const style = beamStyles[type];
-      outerMat.color.setHex(style.color);
-      innerMat.color.setHex(style.coreColor);
-      ringMat.color.setHex(style.color);
+      beamPool.forEach(b => {
+        b.outerMat.color.setHex(style.color);
+        b.innerMat.color.setHex(style.coreColor);
+        b.ringMat.color.setHex(style.color);
+      });
+    }
+
+    function hideAllBeams() {
+      beamPool.forEach(b => b.group.visible = false);
     }
 
     // --------------------------------------------------
-    // ドラッグ選択（指定の場所・物体を囲む機能）
+    // ドラッグ複数箇所囲み機能
     // --------------------------------------------------
     const selectionCanvas = document.getElementById('selection-canvas');
     const ctxSelect = selectionCanvas.getContext('2d');
@@ -346,7 +361,7 @@
 
     let isDrawing = false;
     let pathPoints = [];
-    let customTargetPos = null;
+    let customTargets = [];
 
     selectionCanvas.addEventListener('mousedown', startDraw);
     selectionCanvas.addEventListener('mousemove', draw);
@@ -388,39 +403,47 @@
         const avgX = sumX / pathPoints.length;
         const avgY = sumY / pathPoints.length;
 
-        // 2D画面座標から3D世界座標への変換
         const normX = (avgX / window.innerWidth) * 2 - 1;
         const normY = -(avgY / window.innerHeight) * 2 + 1;
         const aspect = window.innerWidth / window.innerHeight;
 
-        customTargetPos = {
+        customTargets.push({
           x: normX * 2 * aspect,
           y: normY * 2,
           z: -1
-        };
+        });
 
-        statusEl.textContent = '🎯 指定オブジェクトからビーム照射中！';
+        statusEl.textContent = `🎯 ${customTargets.length}箇所からマルチビーム照射中！ (続けて囲めます)`;
       }
+    }
+
+    function clearCustomTargets() {
+      customTargets = [];
+      hideAllBeams();
+      stopBeamSound();
+      statusEl.textContent = '囲みがリセットされました。出したい場所を丸く囲んでください';
     }
 
     function toggleMode() {
       trackingMode = (trackingMode === 'hand') ? 'custom' : 'hand';
       const modeBtn = document.getElementById('mode-btn');
+      const clearBtn = document.getElementById('clear-btn');
       
       if (trackingMode === 'custom') {
         modeBtn.classList.add('active');
-        statusEl.textContent = '画面上の出したい物をマウスや指で「丸く囲んで」ください';
-        beamGroup.visible = false;
+        clearBtn.style.display = 'inline-block';
+        statusEl.textContent = '画面上の出したい物を何箇所でも「丸く囲んで」みてください';
+        hideAllBeams();
         stopBeamSound();
       } else {
         modeBtn.classList.remove('active');
-        customTargetPos = null;
-        statusEl.textContent = '手の認識モード（指先を探しています）';
+        clearBtn.style.display = 'none';
+        statusEl.textContent = '手の認識モード（複数指先対応）';
       }
     }
 
     // --------------------------------------------------
-    // MediaPipe Hands (手認識) & 位置計算
+    // MediaPipe Hands (複数指先認識: 人差し指・中指・薬指)
     // --------------------------------------------------
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
@@ -433,62 +456,77 @@
       minTrackingConfidence: 0.6
     });
 
+    // 指の定義 (先端と関節ペア)
+    const fingerPairs = [
+      { tip: 8,  dip: 6 },  // 人差し指
+      { tip: 12, dip: 10 }, // 中指
+      { tip: 16, dip: 14 }  // 薬指
+    ];
+
     hands.onResults((results) => {
-      // 囲みモードの場合の描画処理
+      hideAllBeams();
+
+      // カスタム（囲み）モード
       if (trackingMode === 'custom') {
-        if (customTargetPos) {
-          beamGroup.position.set(customTargetPos.x, customTargetPos.y, customTargetPos.z);
-          beamGroup.lookAt(customTargetPos.x, customTargetPos.y, customTargetPos.z - 10);
-          beamGroup.visible = true;
+        if (customTargets.length > 0) {
+          customTargets.forEach((target, idx) => {
+            if (idx < MAX_BEAMS) {
+              const b = beamPool[idx];
+              b.group.position.set(target.x, target.y, target.z);
+              b.group.lookAt(target.x, target.y, target.z - 10);
+              b.group.visible = true;
+            }
+          });
           startBeamSound();
+        } else {
+          stopBeamSound();
         }
         return;
       }
 
-      // 手認識モードの場合
+      // 手認識モード（複数指から同時に発射）
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        statusEl.textContent = '指先を認識中 ⚡ (ビーム発射中)';
         const landmarks = results.multiHandLandmarks[0];
-
-        // 8: 人差し指先端, 6: 人差し指第二関節
-        const tip = landmarks[8];
-        const dip = landmarks[6];
-
         const isUser = (currentFacingMode === 'user');
-        const rawTipX = isUser ? (1 - tip.x) : tip.x;
-        const rawDipX = isUser ? (1 - dip.x) : dip.x;
-
         const aspect = window.innerWidth / window.innerHeight;
-        
-        // 指先（発射起点）
-        const tipX = (rawTipX - 0.5) * 4 * aspect;
-        const tipY = (0.5 - tip.y) * 4;
-        const tipZ = -tip.z * 4;
+        let activeCount = 0;
 
-        // 関節（方向判定用）
-        const dipX = (rawDipX - 0.5) * 4 * aspect;
-        const dipY = (0.5 - dip.y) * 4;
-        const dipZ = -dip.z * 4;
+        fingerPairs.forEach((finger, idx) => {
+          const tip = landmarks[finger.tip];
+          const dip = landmarks[finger.dip];
 
-        // 指先を起点にセット
-        beamGroup.position.set(tipX, tipY, tipZ);
+          const rawTipX = isUser ? (1 - tip.x) : tip.x;
+          const rawDipX = isUser ? (1 - dip.x) : dip.x;
 
-        // 関節 → 指先 のベクトル方向へビームを正しく向ける
-        const dir = new THREE.Vector3(tipX - dipX, tipY - dipY, tipZ - dipZ).normalize();
-        const targetPos = new THREE.Vector3().addVectors(beamGroup.position, dir);
-        beamGroup.lookAt(targetPos);
+          const tipX = (rawTipX - 0.5) * 4 * aspect;
+          const tipY = (0.5 - tip.y) * 4;
+          const tipZ = -tip.z * 4;
 
-        beamGroup.visible = true;
+          const dipX = (rawDipX - 0.5) * 4 * aspect;
+          const dipY = (0.5 - dip.y) * 4;
+          const dipZ = -dip.z * 4;
+
+          const b = beamPool[idx];
+          b.group.position.set(tipX, tipY, tipZ);
+
+          const dir = new THREE.Vector3(tipX - dipX, tipY - dipY, tipZ - dipZ).normalize();
+          const targetPos = new THREE.Vector3().addVectors(b.group.position, dir);
+          b.group.lookAt(targetPos);
+
+          b.group.visible = true;
+          activeCount++;
+        });
+
+        statusEl.textContent = `マルチ指先認識中 ⚡ (${activeCount}本発射中)`;
         startBeamSound();
       } else {
         statusEl.textContent = 'カメラに手をかざすか、囲みモードをお試しください';
-        beamGroup.visible = false;
         stopBeamSound();
       }
     });
 
     // --------------------------------------------------
-    // UI / アプリ制御
+    // アプリ制御
     // --------------------------------------------------
     function startApp(beamType) {
       applyBeamStyle(beamType);
@@ -499,7 +537,7 @@
 
     function backToMenu() {
       if (cameraInstance) cameraInstance.stop();
-      beamGroup.visible = false;
+      hideAllBeams();
       stopBeamSound();
       startScreen.style.display = 'flex';
     }
@@ -531,11 +569,13 @@
 
     function animate() {
       requestAnimationFrame(animate);
-      if (beamGroup.visible) {
-        const time = Date.now() * 0.015;
-        outerMat.opacity = 0.5 + Math.sin(time) * 0.2;
-        ringMesh.rotation.z += 0.05;
-      }
+      const time = Date.now() * 0.015;
+      beamPool.forEach(b => {
+        if (b.group.visible) {
+          b.outerMat.opacity = 0.5 + Math.sin(time) * 0.2;
+          b.ringMesh.rotation.z += 0.05;
+        }
+      });
       renderer.render(scene, camera3d);
     }
     animate();
