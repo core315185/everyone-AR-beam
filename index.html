@@ -228,8 +228,8 @@
   <div id="ui-container">
     <div id="status">カメラ準備中...</div>
     <div class="panel">
-      <button id="mode-btn" class="nav-btn" onclick="toggleMode()">🖱 囲みモード切替</button>
-      <button id="clear-btn" class="nav-btn" style="display:none;" onclick="clearCustomTargets()">🗑 囲みリセット</button>
+      <button id="mode-btn" class="nav-btn" onclick="toggleMode()">🖱 物体認識モード切替</button>
+      <button id="clear-btn" class="nav-btn" style="display:none;" onclick="clearCustomTargets()">🗑 追従リセット</button>
       <button class="nav-btn" onclick="backToMenu()">⚙ ビーム変更</button>
       <button class="nav-btn" onclick="toggleCamera()">📷 カメラ切替</button>
     </div>
@@ -242,7 +242,7 @@
     let trackingMode = 'hand';
     let audioCtx = null, beamSoundNode = null, beamGainNode = null;
 
-    const MAX_BEAMS = 10;
+    const MAX_BEAMS = 5;
     const beamPool = [];
 
     const beamStyles = {
@@ -254,6 +254,10 @@
     const statusEl = document.getElementById('status');
     const videoElement = document.getElementById('webcam');
     const startScreen = document.getElementById('start-screen');
+
+    // 画像処理用キャンバス
+    const processCanvas = document.createElement('canvas');
+    const processCtx = processCanvas.getContext('2d');
 
     // --------------------------------------------------
     // オーディオ（効果音）
@@ -293,7 +297,7 @@
     }
 
     // --------------------------------------------------
-    // Three.js (複数ビームの生成と管理)
+    // Three.js (複数ビーム生成 & 描画)
     // --------------------------------------------------
     const canvas3d = document.getElementById('canvas3d');
     const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, alpha: true, antialias: true });
@@ -307,15 +311,18 @@
     function createSingleBeamGroup() {
       const group = new THREE.Group();
 
+      // 円柱ジオメトリ（指先から奥方向へ向かって作成）
       const outerGeo = new THREE.CylinderGeometry(0.04, 0.008, 10, 16);
-      outerGeo.rotateX(Math.PI / 2);
+      outerGeo.rotateX(-Math.PI / 2); // 角度補正：前方（Z軸のマイナス方向）へ向ける
       outerGeo.translate(0, 0, -5);
+
       const outerMat = new THREE.MeshBasicMaterial({ color: 0xff1100, transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending });
       const outerMesh = new THREE.Mesh(outerGeo, outerMat);
 
       const innerGeo = new THREE.CylinderGeometry(0.015, 0.003, 10, 16);
-      innerGeo.rotateX(Math.PI / 2);
+      innerGeo.rotateX(-Math.PI / 2);
       innerGeo.translate(0, 0, -5);
+
       const innerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending });
       const innerMesh = new THREE.Mesh(innerGeo, innerMat);
 
@@ -352,7 +359,7 @@
     }
 
     // --------------------------------------------------
-    // ドラッグ複数箇所囲み機能
+    // ドラッグ囲み & リアルタイム物体追従（トラッキング）
     // --------------------------------------------------
     const selectionCanvas = document.getElementById('selection-canvas');
     const ctxSelect = selectionCanvas.getContext('2d');
@@ -361,7 +368,7 @@
 
     let isDrawing = false;
     let pathPoints = [];
-    let customTargets = [];
+    let trackedObjects = [];
 
     selectionCanvas.addEventListener('mousedown', startDraw);
     selectionCanvas.addEventListener('mousemove', draw);
@@ -397,31 +404,120 @@
       isDrawing = false;
       ctxSelect.clearRect(0, 0, selectionCanvas.width, selectionCanvas.height);
 
-      if (pathPoints.length > 3) {
-        let sumX = 0, sumY = 0;
-        pathPoints.forEach(p => { sumX += p.x; sumY += p.y; });
-        const avgX = sumX / pathPoints.length;
-        const avgY = sumY / pathPoints.length;
-
-        const normX = (avgX / window.innerWidth) * 2 - 1;
-        const normY = -(avgY / window.innerHeight) * 2 + 1;
-        const aspect = window.innerWidth / window.innerHeight;
-
-        customTargets.push({
-          x: normX * 2 * aspect,
-          y: normY * 2,
-          z: -1
+      if (pathPoints.length > 3 && videoElement.videoWidth) {
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        pathPoints.forEach(p => {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
         });
 
-        statusEl.textContent = `🎯 ${customTargets.length}箇所からマルチビーム照射中！ (続けて囲めます)`;
+        const vw = videoElement.videoWidth;
+        const vh = videoElement.videoHeight;
+        processCanvas.width = vw;
+        processCanvas.height = vh;
+        
+        processCtx.save();
+        if (currentFacingMode === 'user') {
+          processCtx.translate(vw, 0);
+          processCtx.scale(-1, 1);
+        }
+        processCtx.drawImage(videoElement, 0, 0, vw, vh);
+        processCtx.restore();
+
+        const scaleX = vw / window.innerWidth;
+        const scaleY = vh / window.innerHeight;
+
+        const vx = Math.floor(minX * scaleX);
+        const vy = Math.floor(minY * scaleY);
+        const vwBox = Math.max(10, Math.floor((maxX - minX) * scaleX));
+        const vhBox = Math.max(10, Math.floor((maxY - minY) * scaleY));
+
+        const imgData = processCtx.getImageData(vx, vy, vwBox, vhBox);
+        const targetRGB = getAverageRGB(imgData.data);
+
+        trackedObjects.push({
+          x: (minX + maxX) / 2,
+          y: (minY + maxY) / 2,
+          targetRGB: targetRGB
+        });
+
+        statusEl.textContent = `🎯 オブジェクトを登録！リアルタイム追従中 (${trackedObjects.length}個)`;
       }
     }
 
+    function getAverageRGB(data) {
+      let r = 0, g = 0, b = 0, count = 0;
+      for (let i = 0; i < data.length; i += 16) {
+        r += data[i];
+        g += data[i+1];
+        b += data[i+2];
+        count++;
+      }
+      return { r: r / count, g: g / count, b: b / count };
+    }
+
+    // カメラフレーム内から登録された色・特徴を探索して追従
+    function updateObjectTracking() {
+      if (trackedObjects.length === 0 || !videoElement.videoWidth) return;
+
+      const vw = videoElement.videoWidth;
+      const vh = videoElement.videoHeight;
+      processCanvas.width = 160; 
+      processCanvas.height = 120;
+
+      processCtx.save();
+      if (currentFacingMode === 'user') {
+        processCtx.translate(160, 0);
+        processCtx.scale(-1, 1);
+      }
+      processCtx.drawImage(videoElement, 0, 0, 160, 120);
+      processCtx.restore();
+
+      const frameData = processCtx.getImageData(0, 0, 160, 120).data;
+
+      trackedObjects.forEach((obj) => {
+        let bestX = obj.x;
+        let bestY = obj.y;
+        let minDiff = Infinity;
+
+        const currentNormX = obj.x / window.innerWidth;
+        const currentNormY = obj.y / window.innerHeight;
+
+        const searchRadius = 0.25; 
+        const minI = Math.max(0, Math.floor((currentNormY - searchRadius) * 120));
+        const maxI = Math.min(120, Math.ceil((currentNormY + searchRadius) * 120));
+        const minJ = Math.max(0, Math.floor((currentNormX - searchRadius) * 160));
+        const maxJ = Math.min(160, Math.ceil((currentNormX + searchRadius) * 160));
+
+        for (let i = minI; i < maxI; i += 2) {
+          for (let j = minJ; j < maxJ; j += 2) {
+            const idx = (i * 160 + j) * 4;
+            const r = frameData[idx];
+            const g = frameData[idx+1];
+            const b = frameData[idx+2];
+
+            const diff = Math.abs(r - obj.targetRGB.r) + Math.abs(g - obj.targetRGB.g) + Math.abs(b - obj.targetRGB.b);
+            if (diff < minDiff) {
+              minDiff = diff;
+              bestX = (j / 160) * window.innerWidth;
+              bestY = (i / 120) * window.innerHeight;
+            }
+          }
+        }
+
+        // スムーズに追従移動
+        obj.x += (bestX - obj.x) * 0.3;
+        obj.y += (bestY - obj.y) * 0.3;
+      });
+    }
+
     function clearCustomTargets() {
-      customTargets = [];
+      trackedObjects = [];
       hideAllBeams();
       stopBeamSound();
-      statusEl.textContent = '囲みがリセットされました。出したい場所を丸く囲んでください';
+      statusEl.textContent = '追従をリセットしました。追従したい物を画面上で囲んでください';
     }
 
     function toggleMode() {
@@ -432,18 +528,18 @@
       if (trackingMode === 'custom') {
         modeBtn.classList.add('active');
         clearBtn.style.display = 'inline-block';
-        statusEl.textContent = '画面上の出したい物を何箇所でも「丸く囲んで」みてください';
+        statusEl.textContent = 'カメラに映る物（指・ペンなど）をドラッグで囲むと自動追従します';
         hideAllBeams();
         stopBeamSound();
       } else {
         modeBtn.classList.remove('active');
         clearBtn.style.display = 'none';
-        statusEl.textContent = '手の認識モード（複数指先対応）';
+        statusEl.textContent = '手の認識モード（指先から前方へビーム発射）';
       }
     }
 
     // --------------------------------------------------
-    // MediaPipe Hands (複数指先認識: 人差し指・中指・薬指)
+    // MediaPipe Hands (複数指先認識 & ビーム向き設定)
     // --------------------------------------------------
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
@@ -456,7 +552,6 @@
       minTrackingConfidence: 0.6
     });
 
-    // 指の定義 (先端と関節ペア)
     const fingerPairs = [
       { tip: 8,  dip: 6 },  // 人差し指
       { tip: 12, dip: 10 }, // 中指
@@ -466,14 +561,23 @@
     hands.onResults((results) => {
       hideAllBeams();
 
-      // カスタム（囲み）モード
+      // 物体追従モード
       if (trackingMode === 'custom') {
-        if (customTargets.length > 0) {
-          customTargets.forEach((target, idx) => {
+        updateObjectTracking();
+        if (trackedObjects.length > 0) {
+          trackedObjects.forEach((obj, idx) => {
             if (idx < MAX_BEAMS) {
+              const normX = (obj.x / window.innerWidth) * 2 - 1;
+              const normY = -(obj.y / window.innerHeight) * 2 + 1;
+              const aspect = window.innerWidth / window.innerHeight;
+
+              const posX = normX * 2 * aspect;
+              const posY = normY * 2;
+              const posZ = -1;
+
               const b = beamPool[idx];
-              b.group.position.set(target.x, target.y, target.z);
-              b.group.lookAt(target.x, target.y, target.z - 10);
+              b.group.position.set(posX, posY, posZ);
+              b.group.lookAt(posX, posY, posZ - 10);
               b.group.visible = true;
             }
           });
@@ -484,7 +588,7 @@
         return;
       }
 
-      // 手認識モード（複数指から同時に発射）
+      // 手指認識モード
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const landmarks = results.multiHandLandmarks[0];
         const isUser = (currentFacingMode === 'user');
@@ -509,6 +613,7 @@
           const b = beamPool[idx];
           b.group.position.set(tipX, tipY, tipZ);
 
+          // ★修正: 第一関節(dip) -> 指先(tip)のベクトルで「指先から外へ」向ける
           const dir = new THREE.Vector3(tipX - dipX, tipY - dipY, tipZ - dipZ).normalize();
           const targetPos = new THREE.Vector3().addVectors(b.group.position, dir);
           b.group.lookAt(targetPos);
@@ -517,16 +622,16 @@
           activeCount++;
         });
 
-        statusEl.textContent = `マルチ指先認識中 ⚡ (${activeCount}本発射中)`;
+        statusEl.textContent = `指先を認識中 ⚡ (${activeCount}本 前方へ発射中)`;
         startBeamSound();
       } else {
-        statusEl.textContent = 'カメラに手をかざすか、囲みモードをお試しください';
+        statusEl.textContent = 'カメラに手をかざすか、物体認識モードをお試しください';
         stopBeamSound();
       }
     });
 
     // --------------------------------------------------
-    // アプリ制御
+    // アプリ・カメラ制御
     // --------------------------------------------------
     function startApp(beamType) {
       applyBeamStyle(beamType);
@@ -556,7 +661,7 @@
       });
 
       cameraInstance.start().then(() => {
-        statusEl.textContent = 'カメラ準備完了！手をかざすか囲みモードを選択してください';
+        statusEl.textContent = 'カメラ準備完了！手をかざすか物体認識モードを選択してください';
       }).catch((err) => {
         statusEl.textContent = 'カメラ読込失敗: ' + err.message;
       });
