@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Fixed Edition</title>
+  <title>Everyone AR Beam - Ultra Reliable Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -23,13 +23,13 @@
       object-fit: cover; z-index: 1; transform: scaleX(-1);
     }
 
-    #canvas3d {
+    #canvas2d {
       position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-      z-index: 5; pointer-events: auto;
+      z-index: 10; pointer-events: auto;
     }
 
     #ui-container {
-      position: absolute; bottom: 25px; left: 0; width: 100%; z-index: 10;
+      position: absolute; bottom: 25px; left: 0; width: 100%; z-index: 20;
       display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 0 15px;
       pointer-events: none;
     }
@@ -46,8 +46,6 @@
     }
     button.nav-btn.danger { background: #ef4444; }
   </style>
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
@@ -56,11 +54,11 @@
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
-  <canvas id="canvas3d"></canvas>
+  <canvas id="canvas2d"></canvas>
   <canvas id="processCanvas" style="display:none;"></canvas>
 
   <div id="ui-container">
-    <div id="status">画面をタップしてビームを発射！</div>
+    <div id="status">画面上の人や物をタップしてください</div>
     <div class="btn-group">
       <button class="nav-btn" onclick="removeLastBeam(event)">❌ 1本解除</button>
       <button class="nav-btn danger" onclick="removeAllBeams(event)">🗑 全削除</button>
@@ -72,41 +70,39 @@
     const videoElement = document.getElementById('webcam');
     const statusEl = document.getElementById('status');
     const startOverlay = document.getElementById('start-overlay');
-    const canvas = document.getElementById('canvas3d');
+    const canvas = document.getElementById('canvas2d');
+    const ctx = canvas.getContext('2d');
     const processCanvas = document.getElementById('processCanvas');
     const pCtx = processCanvas.getContext('2d');
 
-    let renderer, scene, camera3d;
     let currentFacingMode = 'environment';
     let cameraStream = null;
-
     let activeBeams = [];
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
 
     function startApp() {
       startOverlay.style.display = 'none';
-      initThree();
+      resizeCanvas();
       startCamera(currentFacingMode);
 
-      // タップ・クリックイベントをキャンバスに登録
-      window.addEventListener('click', handleTap);
-      
+      // タップ/クリックイベント
+      canvas.addEventListener('pointerdown', handleTap);
+
       animate();
     }
 
     function handleTap(e) {
-      // UIボタンエリアのタップを除外
-      if (e.target.tagName === 'BUTTON' || e.clientY > window.innerHeight - 80) return;
+      if (e.clientY > window.innerHeight - 80) return;
 
-      const normX = (e.clientX / window.innerWidth) * 2 - 1;
-      const normY = -(e.clientY / window.innerHeight) * 2 + 1;
+      const x = e.clientX;
+      const y = e.clientY;
 
-      // 3D空間上のターゲット位置計算（Z=-10の平面上）
-      const aspect = window.innerWidth / window.innerHeight;
-      const targetX = normX * 4 * aspect;
-      const targetY = normY * 4;
-      const targetZ = -10;
-
-      // トラッキング用画像データの抽出（カメラ準備完了時のみ）
+      // 画像追従用パターンの保存
       let templateData = null;
       let videoX = 0, videoY = 0;
 
@@ -115,9 +111,9 @@
         processCanvas.height = 240;
         pCtx.drawImage(videoElement, 0, 0, 320, 240);
         
-        videoX = (e.clientX / window.innerWidth) * 320;
-        videoY = (e.clientY / window.innerHeight) * 240;
-        
+        videoX = (x / window.innerWidth) * 320;
+        videoY = (y / window.innerHeight) * 240;
+
         templateData = pCtx.getImageData(
           Math.max(0, videoX - 15),
           Math.max(0, videoY - 15),
@@ -125,94 +121,42 @@
         );
       }
 
-      const beam = createBeamObject(targetX, targetY, targetZ, videoX, videoY, templateData);
-      activeBeams.push(beam);
-
-      statusEl.textContent = `⚡ ビーム発射中！ (合計: ${activeBeams.length}本)`;
-    }
-
-    function initThree() {
-      renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-      scene = new THREE.Scene();
-      camera3d = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera3d.position.set(0, 0, 5); // カメラ位置を少し手前に
-    }
-
-    function createBeamObject(targetX, targetY, targetZ, videoX, videoY, templateData) {
-      const group = new THREE.Group();
-
-      // ビームの形状を作成 (長さを20に設定)
-      const geo = new THREE.CylinderGeometry(0.15, 0.03, 20, 16);
-      geo.rotateX(Math.PI / 2); // Z軸方向に向ける
-      geo.translate(0, 0, -10); // 根本から奥へ20伸びる形状
-
-      // ビームの外光（水色）
-      const outerMat = new THREE.MeshBasicMaterial({
-        color: 0x00ffff,
-        transparent: true,
-        opacity: 0.9,
-        blending: THREE.AdditiveBlending
-      });
-      const beamMesh = new THREE.Mesh(geo, outerMat);
-
-      // ビームの芯（白）
-      const coreGeo = new THREE.CylinderGeometry(0.05, 0.01, 20, 16);
-      coreGeo.rotateX(Math.PI / 2);
-      coreGeo.translate(0, 0, -10);
-      const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-      const coreMesh = new THREE.Mesh(coreGeo, coreMat);
-
-      group.add(beamMesh);
-      group.add(coreMesh);
-
-      // 発射位置（画面下部中央・手前）
-      const startPos = new THREE.Vector3(0, -3, 2);
-      group.position.copy(startPos);
-
-      // タップした奥の方向を向く
-      const targetVec = new THREE.Vector3(targetX, targetY, targetZ);
-      group.lookAt(targetVec);
-
-      scene.add(group);
-
-      return {
-        group: group,
-        mat: outerMat,
-        targetX: targetX, targetY: targetY, targetZ: targetZ,
-        smoothTargetX: targetX, smoothTargetY: targetY, smoothTargetZ: targetZ,
-        videoX: videoX, videoY: videoY,
+      activeBeams.push({
+        x: x,
+        y: y,
+        smoothX: x,
+        smoothY: y,
+        videoX: videoX,
+        videoY: videoY,
         template: templateData
-      };
+      });
+
+      statusEl.textContent = `⚡ ビームロックオン！ (合計: ${activeBeams.length}本)`;
     }
 
     function removeLastBeam(e) {
       if (e) e.stopPropagation();
       if (activeBeams.length > 0) {
-        const lastBeam = activeBeams.pop();
-        scene.remove(lastBeam.group);
+        activeBeams.pop();
         statusEl.textContent = `❌ 1本解除 (残り: ${activeBeams.length}本)`;
       }
     }
 
     function removeAllBeams(e) {
       if (e) e.stopPropagation();
-      activeBeams.forEach(b => scene.remove(b.group));
       activeBeams = [];
       statusEl.textContent = '🗑 すべてのビームを削除しました';
     }
 
+    // 物体・映像トラッキング
     function trackObjects() {
       if (activeBeams.length === 0 || videoElement.readyState !== 4) return;
 
       processCanvas.width = 320;
       processCanvas.height = 240;
       pCtx.drawImage(videoElement, 0, 0, 320, 240);
-
       const frame = pCtx.getImageData(0, 0, 320, 240);
-      const searchRadius = 20;
+      const searchRadius = 15;
 
       activeBeams.forEach(beam => {
         if (!beam.template) return;
@@ -225,8 +169,8 @@
         const tH = beam.template.height;
         const tData = beam.template.data;
 
-        for (let dy = -searchRadius; dy <= searchRadius; dy += 4) {
-          for (let dx = -searchRadius; dx <= searchRadius; dx += 4) {
+        for (let dy = -searchRadius; dy <= searchRadius; dy += 3) {
+          for (let dx = -searchRadius; dx <= searchRadius; dx += 3) {
             const curX = Math.floor(beam.videoX + dx);
             const curY = Math.floor(beam.videoY + dy);
 
@@ -248,12 +192,8 @@
 
         beam.videoX = bestX;
         beam.videoY = bestY;
-
-        const aspect = window.innerWidth / window.innerHeight;
-        const normX = (bestX / 320) * 2 - 1;
-        const normY = -(bestY / 240) * 2 + 1;
-        beam.targetX = normX * 4 * aspect;
-        beam.targetY = normY * 4;
+        beam.x = (bestX / 320) * window.innerWidth;
+        beam.y = (bestY / 240) * window.innerHeight;
       });
     }
 
@@ -269,7 +209,7 @@
         });
         videoElement.srcObject = cameraStream;
       } catch (e) {
-        statusEl.textContent = 'カメラの取得に失敗しました';
+        statusEl.textContent = 'カメラ起動エラー: ' + e.message;
       }
     }
 
@@ -282,26 +222,62 @@
     function animate() {
       requestAnimationFrame(animate);
 
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
       trackObjects();
 
+      const startX = canvas.width / 2;
+      const startY = canvas.height + 20; // 画面下部中央
+
       activeBeams.forEach((beam) => {
-        beam.smoothTargetX += (beam.targetX - beam.smoothTargetX) * 0.2;
-        beam.smoothTargetY += (beam.targetY - beam.smoothTargetY) * 0.2;
+        // 対象座標への滑らかな補完移動
+        beam.smoothX += (beam.x - beam.smoothX) * 0.2;
+        beam.smoothY += (beam.y - beam.smoothY) * 0.2;
 
-        const targetVec = new THREE.Vector3(beam.smoothTargetX, beam.smoothTargetY, beam.targetZ);
-        beam.group.lookAt(targetVec);
+        const targetX = beam.smoothX;
+        const targetY = beam.smoothY;
 
-        beam.mat.opacity = 0.75 + Math.sin(Date.now() * 0.01) * 0.2;
+        // 1. ビームの外光（グローエフェクト）
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(targetX, targetY);
+        ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)';
+        ctx.lineWidth = 18;
+        ctx.lineCap = 'round';
+        ctx.shadowColor = '#00ffff';
+        ctx.shadowBlur = 20;
+        ctx.stroke();
+        ctx.restore();
+
+        // 2. ビームの芯（白いライン）
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(targetX, targetY);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 6;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.restore();
+
+        // 3. ロックオンターゲット（リングとコア）
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(targetX, targetY, 20 + Math.sin(Date.now() * 0.01) * 3, 0, Math.PI * 2);
+        ctx.strokeStyle = '#00ffff';
+        ctx.lineWidth = 3;
+        ctx.shadowColor = '#00ffff';
+        ctx.shadowBlur = 10;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(targetX, targetY, 6, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.restore();
       });
-
-      renderer.render(scene, camera3d);
     }
-
-    window.addEventListener('resize', () => {
-      camera3d.aspect = window.innerWidth / window.innerHeight;
-      camera3d.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
   </script>
 </body>
 </html>
