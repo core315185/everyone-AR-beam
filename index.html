@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Ultra Reliable Edition</title>
+  <title>Everyone AR Beam - Fixed Events Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -14,18 +14,19 @@
 
     #start-overlay {
       position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-      background-color: rgba(0,0,0,0.9); z-index: 30;
+      background-color: rgba(0,0,0,0.9); z-index: 100;
       display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 20px;
     }
 
     #webcam {
       position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
       object-fit: cover; z-index: 1; transform: scaleX(-1);
+      pointer-events: none;
     }
 
     #canvas2d {
       position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-      z-index: 10; pointer-events: auto;
+      z-index: 10;
     }
 
     #ui-container {
@@ -50,7 +51,7 @@
 <body>
 
   <div id="start-overlay">
-    <button class="nav-btn" onclick="startApp()">👆 タップしてARを開始</button>
+    <button class="nav-btn" id="start-btn">👆 タップしてARを開始</button>
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
@@ -60,9 +61,9 @@
   <div id="ui-container">
     <div id="status">画面上の人や物をタップしてください</div>
     <div class="btn-group">
-      <button class="nav-btn" onclick="removeLastBeam(event)">❌ 1本解除</button>
-      <button class="nav-btn danger" onclick="removeAllBeams(event)">🗑 全削除</button>
-      <button class="nav-btn" onclick="toggleCamera(event)">📷 カメラ切替</button>
+      <button class="nav-btn" id="remove-btn">❌ 1本解除</button>
+      <button class="nav-btn danger" id="clear-btn">🗑 全削除</button>
+      <button class="nav-btn" id="cam-btn">📷 カメラ切替</button>
     </div>
   </div>
 
@@ -70,6 +71,7 @@
     const videoElement = document.getElementById('webcam');
     const statusEl = document.getElementById('status');
     const startOverlay = document.getElementById('start-overlay');
+    const startBtn = document.getElementById('start-btn');
     const canvas = document.getElementById('canvas2d');
     const ctx = canvas.getContext('2d');
     const processCanvas = document.getElementById('processCanvas');
@@ -85,24 +87,23 @@
     }
     window.addEventListener('resize', resizeCanvas);
 
-    function startApp() {
+    // 開始処理
+    startBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
       startOverlay.style.display = 'none';
       resizeCanvas();
       startCamera(currentFacingMode);
-
-      // タップ/クリックイベント
-      canvas.addEventListener('pointerdown', handleTap);
-
       animate();
-    }
+    });
 
-    function handleTap(e) {
-      if (e.clientY > window.innerHeight - 80) return;
+    // 画面タップでビーム生成
+    window.addEventListener('pointerdown', (e) => {
+      if (startOverlay.style.display !== 'none') return;
+      if (e.target.tagName === 'BUTTON' || e.clientY > window.innerHeight - 80) return;
 
       const x = e.clientX;
       const y = e.clientY;
 
-      // 画像追従用パターンの保存
       let templateData = null;
       let videoX = 0, videoY = 0;
 
@@ -131,24 +132,31 @@
         template: templateData
       });
 
-      statusEl.textContent = `⚡ ビームロックオン！ (合計: ${activeBeams.length}本)`;
-    }
+      statusEl.textContent = `⚡ ビーム発射中！ (合計: ${activeBeams.length}本)`;
+    });
 
-    function removeLastBeam(e) {
-      if (e) e.stopPropagation();
+    // UIボタン機能
+    document.getElementById('remove-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
       if (activeBeams.length > 0) {
         activeBeams.pop();
         statusEl.textContent = `❌ 1本解除 (残り: ${activeBeams.length}本)`;
       }
-    }
+    });
 
-    function removeAllBeams(e) {
-      if (e) e.stopPropagation();
+    document.getElementById('clear-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
       activeBeams = [];
       statusEl.textContent = '🗑 すべてのビームを削除しました';
-    }
+    });
 
-    // 物体・映像トラッキング
+    document.getElementById('cam-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
+      startCamera(currentFacingMode);
+    });
+
+    // 画像追従
     function trackObjects() {
       if (activeBeams.length === 0 || videoElement.readyState !== 4) return;
 
@@ -213,12 +221,6 @@
       }
     }
 
-    function toggleCamera(e) {
-      if (e) e.stopPropagation();
-      currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
-      startCamera(currentFacingMode);
-    }
-
     function animate() {
       requestAnimationFrame(animate);
 
@@ -227,52 +229,51 @@
       trackObjects();
 
       const startX = canvas.width / 2;
-      const startY = canvas.height + 20; // 画面下部中央
+      const startY = canvas.height + 10;
 
       activeBeams.forEach((beam) => {
-        // 対象座標への滑らかな補完移動
         beam.smoothX += (beam.x - beam.smoothX) * 0.2;
         beam.smoothY += (beam.y - beam.smoothY) * 0.2;
 
         const targetX = beam.smoothX;
         const targetY = beam.smoothY;
 
-        // 1. ビームの外光（グローエフェクト）
+        // 1. ビームの外光（シアン）
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(startX, startY);
         ctx.lineTo(targetX, targetY);
-        ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)';
-        ctx.lineWidth = 18;
+        ctx.strokeStyle = 'rgba(0, 255, 255, 0.85)';
+        ctx.lineWidth = 20;
         ctx.lineCap = 'round';
         ctx.shadowColor = '#00ffff';
-        ctx.shadowBlur = 20;
+        ctx.shadowBlur = 25;
         ctx.stroke();
         ctx.restore();
 
-        // 2. ビームの芯（白いライン）
+        // 2. ビームのコア（白）
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(startX, startY);
         ctx.lineTo(targetX, targetY);
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 6;
+        ctx.lineWidth = 8;
         ctx.lineCap = 'round';
         ctx.stroke();
         ctx.restore();
 
-        // 3. ロックオンターゲット（リングとコア）
+        // 3. ロックオンリング
         ctx.save();
         ctx.beginPath();
-        ctx.arc(targetX, targetY, 20 + Math.sin(Date.now() * 0.01) * 3, 0, Math.PI * 2);
+        ctx.arc(targetX, targetY, 22 + Math.sin(Date.now() * 0.01) * 4, 0, Math.PI * 2);
         ctx.strokeStyle = '#00ffff';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 4;
         ctx.shadowColor = '#00ffff';
-        ctx.shadowBlur = 10;
+        ctx.shadowBlur = 12;
         ctx.stroke();
 
         ctx.beginPath();
-        ctx.arc(targetX, targetY, 6, 0, Math.PI * 2);
+        ctx.arc(targetX, targetY, 8, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff';
         ctx.fill();
         ctx.restore();
