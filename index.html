@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - 3D 3-Axis Motion Edition</title>
+  <title>Everyone AR Beam - AI-Powered Vision Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -48,12 +48,16 @@
     }
     button.nav-btn.danger { background: #ef4444; }
   </style>
+  <!-- Three.js 3D Engine -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- MediaPipe AI Vision CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
   <div id="start-overlay">
-    <button class="nav-btn" id="start-btn">👆 タップして3D ARを開始</button>
+    <button class="nav-btn" id="start-btn">🤖 AIビームARを開始</button>
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
@@ -61,7 +65,7 @@
   <canvas id="processCanvas" style="display:none;"></canvas>
 
   <div id="ui-container">
-    <div id="status">画面上の人や物をタップしてください</div>
+    <div id="status">画面上の人や物をタップしてください（AI自動判定）</div>
     <div class="btn-group">
       <button class="nav-btn" id="remove-btn">❌ 1本解除</button>
       <button class="nav-btn danger" id="clear-btn">🗑 全削除</button>
@@ -84,10 +88,27 @@
 
     const PROC_W = 320;
     const PROC_H = 240;
-    const TEMP_SIZE = 24;
+    const TEMP_SIZE = 20;
 
     let scene, camera, renderer;
     const Z_PLANE = -12;
+
+    // AI Detector (Face Detection)
+    let faceDetector = null;
+    let detectedFaces = [];
+
+    function initAI() {
+      faceDetector = new FaceDetection({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
+      });
+      faceDetector.setOptions({
+        modelSelection: 0,
+        minDetectionConfidence: 0.5
+      });
+      faceDetector.onResults((results) => {
+        detectedFaces = results.detections || [];
+      });
+    }
 
     function init3D() {
       scene = new THREE.Scene();
@@ -123,19 +144,17 @@
     function create3DBeamMesh() {
       const group = new THREE.Group();
 
-      // 1. 外側ビーム（3Dシリンダー）
       const outerGeo = new THREE.CylinderGeometry(0.2, 0.05, 1, 16);
-      outerGeo.translate(0, 0.5, 0); // 原点を底面に
+      outerGeo.translate(0, 0.5, 0);
       const outerMat = new THREE.MeshBasicMaterial({
         color: 0x00ffff,
         transparent: true,
-        opacity: 0.7,
+        opacity: 0.75,
         blending: THREE.AdditiveBlending
       });
       const outerMesh = new THREE.Mesh(outerGeo, outerMat);
       group.add(outerMesh);
 
-      // 2. 内側ビーム（白い芯）
       const innerGeo = new THREE.CylinderGeometry(0.08, 0.02, 1, 12);
       innerGeo.translate(0, 0.5, 0);
       const innerMat = new THREE.MeshBasicMaterial({
@@ -147,7 +166,6 @@
       const innerMesh = new THREE.Mesh(innerGeo, innerMat);
       group.add(innerMesh);
 
-      // 3. 3D ロックオンリング
       const ringGeo = new THREE.RingGeometry(0.25, 0.32, 32);
       const ringMat = new THREE.MeshBasicMaterial({
         color: 0x00ffff,
@@ -159,7 +177,6 @@
       const ringMesh = new THREE.Mesh(ringGeo, ringMat);
       group.add(ringMesh);
 
-      // 4. 先端スパークパーティクル
       const pCount = 35;
       const pGeo = new THREE.BufferGeometry();
       const pPos = new Float32Array(pCount * 3);
@@ -188,45 +205,78 @@
     startBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       startOverlay.style.display = 'none';
+      initAI();
       init3D();
       startCamera(currentFacingMode);
       animate();
     });
 
-    // 3次元全方位（3面）からのランダムな発生源ポイントを生成
     function calculate3DOrigin(targetX, targetY) {
       const target3D = screenTo3D(targetX, targetY);
-      
-      // X, Y, Z の3軸全方向に拡散させた3D位置を作成
       const randomDir = new THREE.Vector3(
         (Math.random() - 0.5) * 20,
         (Math.random() - 0.5) * 20,
-        -5 - Math.random() * 25 // 手前〜奥へ深く配置
+        -5 - Math.random() * 25
       );
-
       return target3D.clone().add(randomDir);
+    }
+
+    function extractLuminance(imageData) {
+      const lum = new Float32Array(imageData.width * imageData.height);
+      const d = imageData.data;
+      for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+        lum[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+      }
+      return lum;
     }
 
     function handleTap(clientX, clientY) {
       if (startOverlay.style.display !== 'none') return;
       if (clientY > window.innerHeight - 80) return;
 
-      let templateData = null;
+      let lumTemplate = null;
       let videoX = 0, videoY = 0;
+      let isAiTarget = false;
+      let targetFaceIndex = -1;
+
+      const normX = clientX / window.innerWidth;
+      const normY = clientY / window.innerHeight;
+
+      // 1. AI (MediaPipe) によるタップ位置の顔判定
+      detectedFaces.forEach((face, idx) => {
+        const box = face.boundingBox;
+        let boxX = box.xCenter;
+        if (currentFacingMode === 'user') {
+          boxX = 1.0 - boxX;
+        }
+
+        const dist = Math.hypot(boxX - normX, box.yCenter - normY);
+        if (dist < 0.25) { // タップ領域近傍の場合AI追従モード適用
+          isAiTarget = true;
+          targetFaceIndex = idx;
+        }
+      });
 
       if (videoElement.readyState >= 2) {
         try {
           processCanvas.width = PROC_W;
           processCanvas.height = PROC_H;
+
+          let targetX = clientX;
+          if (currentFacingMode === 'user') {
+            targetX = window.innerWidth - clientX;
+          }
+
           pCtx.drawImage(videoElement, 0, 0, PROC_W, PROC_H);
           
-          videoX = (clientX / window.innerWidth) * PROC_W;
+          videoX = (targetX / window.innerWidth) * PROC_W;
           videoY = (clientY / window.innerHeight) * PROC_H;
 
-          const startX = Math.max(0, Math.min(PROC_W - TEMP_SIZE, videoX - TEMP_SIZE / 2));
-          const startY = Math.max(0, Math.min(PROC_H - TEMP_SIZE, videoY - TEMP_SIZE / 2));
+          const startX = Math.max(0, Math.min(PROC_W - TEMP_SIZE, Math.floor(videoX - TEMP_SIZE / 2)));
+          const startY = Math.max(0, Math.min(PROC_H - TEMP_SIZE, Math.floor(videoY - TEMP_SIZE / 2)));
 
-          templateData = pCtx.getImageData(startX, startY, TEMP_SIZE, TEMP_SIZE);
+          const crop = pCtx.getImageData(startX, startY, TEMP_SIZE, TEMP_SIZE);
+          lumTemplate = extractLuminance(crop);
         } catch (err) {}
       }
 
@@ -241,11 +291,17 @@
         smoothY: clientY,
         videoX: videoX,
         videoY: videoY,
-        template: templateData,
+        vx: 0,
+        vy: 0,
+        isAiTarget: isAiTarget,
+        targetFaceIndex: targetFaceIndex,
+        lumTemplate: lumTemplate,
         meshData: meshData
       });
 
-      statusEl.textContent = `⚡ 3面立体ビーム発射！ (合計: ${activeBeams.length}本)`;
+      statusEl.textContent = isAiTarget 
+        ? `🤖 AI顔認識ロックオン発射！ (合計: ${activeBeams.length}本)`
+        : `⚡ 物体トラッキングビーム発射！ (合計: ${activeBeams.length}本)`;
     }
 
     canvas3d.addEventListener('touchstart', (e) => {
@@ -280,51 +336,129 @@
       startCamera(currentFacingMode);
     });
 
+    // AI + 高速パターンマッチングのハイブリッド処理
     function trackObjects() {
       if (activeBeams.length === 0 || videoElement.readyState < 2) return;
+
+      // AIモデルへ映像フレームを渡す
+      if (faceDetector) {
+        faceDetector.send({ image: videoElement });
+      }
 
       try {
         processCanvas.width = PROC_W;
         processCanvas.height = PROC_H;
         pCtx.drawImage(videoElement, 0, 0, PROC_W, PROC_H);
-        const frame = pCtx.getImageData(0, 0, PROC_W, PROC_H);
+        const frameData = pCtx.getImageData(0, 0, PROC_W, PROC_H);
+        const frameLum = extractLuminance(frameData);
 
         activeBeams.forEach(beam => {
-          if (!beam.template) return;
+          let updated = false;
 
-          const tData = beam.template.data;
-          let bestX = beam.videoX;
-          let bestY = beam.videoY;
-          let minDiff = Infinity;
-
-          for (let dy = -36; dy <= 36; dy += 6) {
-            for (let dx = -36; dx <= 36; dx += 6) {
-              const curX = Math.floor(beam.videoX + dx);
-              const curY = Math.floor(beam.videoY + dy);
-              if (curX < 0 || curX >= PROC_W - TEMP_SIZE || curY < 0 || curY >= PROC_H - TEMP_SIZE) continue;
-
-              let diff = 0;
-              for (let i = 0; i < tData.length; i += 16) {
-                const px = (i / 4) % TEMP_SIZE;
-                const py = Math.floor((i / 4) / TEMP_SIZE);
-                const fIdx = ((curY + py) * PROC_W + (curX + px)) * 4;
-                diff += Math.abs(frame.data[fIdx] - tData[i]) +
-                        Math.abs(frame.data[fIdx + 1] - tData[i + 1]) +
-                        Math.abs(frame.data[fIdx + 2] - tData[i + 2]);
+          // モードA: AI顔検出追従
+          if (beam.isAiTarget && detectedFaces.length > 0) {
+            const face = detectedFaces[beam.targetFaceIndex] || detectedFaces[0];
+            if (face) {
+              const box = face.boundingBox;
+              let targetX = box.xCenter * window.innerWidth;
+              if (currentFacingMode === 'user') {
+                targetX = window.innerWidth - targetX;
               }
-              if (diff < minDiff) {
-                minDiff = diff;
-                bestX = curX;
-                bestY = curY;
-              }
+              beam.x = targetX;
+              beam.y = box.yCenter * window.innerHeight;
+              updated = true;
             }
           }
 
-          if (minDiff < 40000) {
-            beam.videoX = bestX;
-            beam.videoY = bestY;
-            beam.x = (bestX / PROC_W) * window.innerWidth;
-            beam.y = (bestY / PROC_H) * window.innerHeight;
+          // モードB: 輝度パターンマッチング (物体またはAIフォールバック)
+          if (!updated && beam.lumTemplate) {
+            const tLum = beam.lumTemplate;
+            let bestX = beam.videoX;
+            let bestY = beam.videoY;
+            let minSad = Infinity;
+
+            const predictX = beam.videoX + beam.vx;
+            const predictY = beam.videoY + beam.vy;
+
+            const searchRangeCoarse = 60;
+            for (let dy = -searchRangeCoarse; dy <= searchRangeCoarse; dy += 4) {
+              for (let dx = -searchRangeCoarse; dx <= searchRangeCoarse; dx += 4) {
+                const cx = Math.floor(predictX + dx);
+                const cy = Math.floor(predictY + dy);
+                if (cx < 0 || cx >= PROC_W - TEMP_SIZE || cy < 0 || cy >= PROC_H - TEMP_SIZE) continue;
+
+                let sad = 0;
+                for (let ty = 0; ty < TEMP_SIZE; ty += 2) {
+                  for (let tx = 0; tx < TEMP_SIZE; tx += 2) {
+                    const fIdx = (cy + ty) * PROC_W + (cx + tx);
+                    const tIdx = ty * TEMP_SIZE + tx;
+                    sad += Math.abs(frameLum[fIdx] - tLum[tIdx]);
+                  }
+                }
+
+                if (sad < minSad) {
+                  minSad = sad;
+                  bestX = cx;
+                  bestY = cy;
+                }
+              }
+            }
+
+            const fineCenterX = bestX;
+            const fineCenterY = bestY;
+            minSad = Infinity;
+
+            for (let dy = -8; dy <= 8; dy++) {
+              for (let dx = -8; dx <= 8; dx++) {
+                const cx = fineCenterX + dx;
+                const cy = fineCenterY + dy;
+                if (cx < 0 || cx >= PROC_W - TEMP_SIZE || cy < 0 || cy >= PROC_H - TEMP_SIZE) continue;
+
+                let sad = 0;
+                for (let ty = 0; ty < TEMP_SIZE; ty++) {
+                  for (let tx = 0; tx < TEMP_SIZE; tx++) {
+                    const fIdx = (cy + ty) * PROC_W + (cx + tx);
+                    const tIdx = ty * TEMP_SIZE + tx;
+                    sad += Math.abs(frameLum[fIdx] - tLum[tIdx]);
+                  }
+                }
+
+                if (sad < minSad) {
+                  minSad = sad;
+                  bestX = cx;
+                  bestY = cy;
+                }
+              }
+            }
+
+            const avgSad = minSad / (TEMP_SIZE * TEMP_SIZE);
+            if (avgSad < 45) {
+              beam.vx = (bestX - beam.videoX) * 0.5;
+              beam.vy = (bestY - beam.videoY) * 0.5;
+
+              beam.videoX = bestX;
+              beam.videoY = bestY;
+
+              let screenX = (bestX / PROC_W) * window.innerWidth;
+              if (currentFacingMode === 'user') {
+                screenX = window.innerWidth - screenX;
+              }
+              beam.x = screenX;
+              beam.y = (bestY / PROC_H) * window.innerHeight;
+
+              if (avgSad < 20) {
+                const crop = pCtx.getImageData(bestX, bestY, TEMP_SIZE, TEMP_SIZE);
+                const newLum = extractLuminance(crop);
+                for (let k = 0; k < tLum.length; k++) {
+                  tLum[k] = tLum[k] * 0.8 + newLum[k] * 0.2;
+                }
+              }
+            } else {
+              beam.videoX += beam.vx;
+              beam.videoY += beam.vy;
+              beam.vx *= 0.8;
+              beam.vy *= 0.8;
+            }
           }
         });
       } catch (err) {}
@@ -346,7 +480,7 @@
       }
     }
 
-    const defaultUp = new THREE.Vector3(0, 1, 0); // シリンダーの初期方向（Y軸）
+    const defaultUp = new THREE.Vector3(0, 1, 0);
 
     function animate() {
       requestAnimationFrame(animate);
@@ -354,24 +488,21 @@
       trackObjects();
 
       activeBeams.forEach((beam) => {
-        beam.smoothX += (beam.x - beam.smoothX) * 0.4;
-        beam.smoothY += (beam.y - beam.smoothY) * 0.4;
+        beam.smoothX += (beam.x - beam.smoothX) * 0.35;
+        beam.smoothY += (beam.y - beam.smoothY) * 0.35;
 
         const start3D = beam.origin3D;
         const target3D = screenTo3D(beam.smoothX, beam.smoothY);
 
         const { outerMesh, innerMesh, ringMesh, particleSystem, pVel } = beam.meshData;
 
-        // 3D空間上の方向ベクトルと距離の計算
         const dir = new THREE.Vector3().subVectors(target3D, start3D);
         const distance = dir.length();
         dir.normalize();
 
-        // 3軸（X, Y, Z）に合わせた全方位回転クォータニオン計算
         const quaternion = new THREE.Quaternion();
         quaternion.setFromUnitVectors(defaultUp, dir);
 
-        // 位置・回転・スケールの適用
         outerMesh.position.copy(start3D);
         outerMesh.quaternion.copy(quaternion);
         outerMesh.scale.set(1, distance, 1);
@@ -380,15 +511,13 @@
         innerMesh.quaternion.copy(quaternion);
         innerMesh.scale.set(1, distance, 1);
 
-        // ロックオンリングをターゲット位置へ（ターゲット方向に向けて回転）
         ringMesh.position.copy(target3D);
         ringMesh.quaternion.copy(quaternion);
-        ringMesh.rotateX(Math.PI / 2); // リング面をビームと直角に
+        ringMesh.rotateX(Math.PI / 2);
         ringMesh.rotation.z += 0.04;
         const scalePulse = 1 + Math.sin(Date.now() * 0.01) * 0.2;
         ringMesh.scale.set(scalePulse, scalePulse, scalePulse);
 
-        // 先端3Dスパーク粒子のアニメーション
         particleSystem.position.copy(target3D);
         const positions = particleSystem.geometry.attributes.position.array;
 
