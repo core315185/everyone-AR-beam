@@ -8,17 +8,16 @@
 
 ## 🚀 ARを開始する
 
-下のボタンまたはリンクをタップすると、Webブラウザで直接ARアプリが起動します。
+下のボタンをタップすると、Webブラウザで直接ARアプリが起動します。
 
-[![Start AR Beam](https://img.shields.io/badge/⚡_ARを開始する-タップして起動-00ffff?style=for-the-badge&logoColor=white)](./index.html)
-
-> **👉 [ARアプリを起動する（index.htmlを開く）](./index.html)**
+[![Start AR Beam](https://img.shields.io/badge/⚡_ARを開始する-タップして起動-00ffff?style=for-the-badge&logoColor=white)](https://core315185.github.io/everyone-AR-beam/)
 
 ---
 
 ## 🌟 主な機能
 
 - **ワンタップ3D発射**: 画面の任意の場所をタップするだけで、立体的な光柱（3Dシリンダーメッシュ）とロックオン照準を生成します。
+- **3面立体（3軸）モーション**: ビームの向きが2D平面ではなく、X・Y・Z軸の全方位3D空間にリアルタイムで動きます。
 - **3Dパーティクルエフェクト**: ビームの着弾点からリアルタイムで光の粒子（スパーク）が飛び散ります。
 - **リアルタイム物体追従**: タップした位置の映像パターンを認識し、被写体やカメラが動いてもビームの先端が自動で追いかけます。
 - **マルチビーム対応**: 画面上の複数の対象に同時にビームを固定・発射できます。
@@ -55,8 +54,3 @@
 .
 ├── index.html     # WebGL 3D ARアプリ本体
 └── README.md      # 本ドキュメント
-
-⚠️ 注意事項・動作環境
-iOSをご利用の場合は Safari、Androidをご利用の場合は Chrome での閲覧を推奨します。
-
-カメラ機能を使用するため、HTTPS環境（または localhost）でのアクセスが必要です。
