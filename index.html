@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Universal Object Tracking</title>
+  <title>Everyone AR Beam - Fixed Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -57,16 +57,14 @@
 
   <video id="webcam" autoplay playsinline muted></video>
   <canvas id="canvas3d"></canvas>
-
-  <!-- 物体認識用隠しキャンバス -->
   <canvas id="processCanvas" style="display:none;"></canvas>
 
   <div id="ui-container">
-    <div id="status">人や物（好きな場所）をタップしてビームをロックオン！</div>
+    <div id="status">画面をタップしてビームを発射！</div>
     <div class="btn-group">
-      <button class="nav-btn" onclick="removeLastBeam()">❌ 1本解除</button>
-      <button class="nav-btn danger" onclick="removeAllBeams()">🗑 全削除</button>
-      <button class="nav-btn" onclick="toggleCamera()">📷 カメラ切替</button>
+      <button class="nav-btn" onclick="removeLastBeam(event)">❌ 1本解除</button>
+      <button class="nav-btn danger" onclick="removeAllBeams(event)">🗑 全削除</button>
+      <button class="nav-btn" onclick="toggleCamera(event)">📷 カメラ切替</button>
     </div>
   </div>
 
@@ -89,40 +87,48 @@
       initThree();
       startCamera(currentFacingMode);
 
-      // タップした場所（人・物問わず）を追従対象に登録
-      canvas.addEventListener('pointerdown', (e) => {
-        if (e.clientY > window.innerHeight - 80) return;
-
-        const rect = canvas.getBoundingClientRect();
-        const clientX = e.clientX - rect.left;
-        const clientY = e.clientY - rect.top;
-
-        // 映像内ピクセル位置
-        const videoX = (clientX / window.innerWidth) * processCanvas.width;
-        const videoY = (clientY / window.innerHeight) * processCanvas.height;
-
-        // 3D空間のXY座標（カメラ前方の位置）
-        const aspect = window.innerWidth / window.innerHeight;
-        const normX = (clientX / window.innerWidth) * 2 - 1;
-        const normY = -(clientY / window.innerHeight) * 2 + 1;
-        const worldX = normX * 5 * aspect;
-        const worldY = normY * 5;
-
-        // テンプレート画像の保存（物体追従用）
-        const templateSize = 30;
-        const templateData = pCtx.getImageData(
-          Math.max(0, videoX - templateSize/2),
-          Math.max(0, videoY - templateSize/2),
-          templateSize, templateSize
-        );
-
-        const beam = createBeamObject(worldX, worldY, videoX, videoY, templateData);
-        activeBeams.push(beam);
-
-        statusEl.textContent = `🎯 対象物をロックオン！ (合計: ${activeBeams.length}本)`;
-      });
-
+      // タップ・クリックイベントをキャンバスに登録
+      window.addEventListener('click', handleTap);
+      
       animate();
+    }
+
+    function handleTap(e) {
+      // UIボタンエリアのタップを除外
+      if (e.target.tagName === 'BUTTON' || e.clientY > window.innerHeight - 80) return;
+
+      const normX = (e.clientX / window.innerWidth) * 2 - 1;
+      const normY = -(e.clientY / window.innerHeight) * 2 + 1;
+
+      // 3D空間上のターゲット位置計算（Z=-10の平面上）
+      const aspect = window.innerWidth / window.innerHeight;
+      const targetX = normX * 4 * aspect;
+      const targetY = normY * 4;
+      const targetZ = -10;
+
+      // トラッキング用画像データの抽出（カメラ準備完了時のみ）
+      let templateData = null;
+      let videoX = 0, videoY = 0;
+
+      if (videoElement.readyState === 4) {
+        processCanvas.width = 320;
+        processCanvas.height = 240;
+        pCtx.drawImage(videoElement, 0, 0, 320, 240);
+        
+        videoX = (e.clientX / window.innerWidth) * 320;
+        videoY = (e.clientY / window.innerHeight) * 240;
+        
+        templateData = pCtx.getImageData(
+          Math.max(0, videoX - 15),
+          Math.max(0, videoY - 15),
+          30, 30
+        );
+      }
+
+      const beam = createBeamObject(targetX, targetY, targetZ, videoX, videoY, templateData);
+      activeBeams.push(beam);
+
+      statusEl.textContent = `⚡ ビーム発射中！ (合計: ${activeBeams.length}本)`;
     }
 
     function initThree() {
@@ -131,38 +137,43 @@
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
       scene = new THREE.Scene();
-      camera3d = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera3d.position.z = 10;
+      camera3d = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera3d.position.set(0, 0, 5); // カメラ位置を少し手前に
     }
 
-    function createBeamObject(worldX, worldY, videoX, videoY, templateData) {
+    function createBeamObject(targetX, targetY, targetZ, videoX, videoY, templateData) {
       const group = new THREE.Group();
 
-      // ★ 向きの修正：伸ばす方向（translate）をZ軸マイナス（カメラ奥）に変更
-      const geo = new THREE.CylinderGeometry(0.2, 0.03, 30, 16);
-      geo.rotateX(Math.PI / 2);
-      geo.translate(0, 0, -15); // 根本から奥方向へ伸ばす
+      // ビームの形状を作成 (長さを20に設定)
+      const geo = new THREE.CylinderGeometry(0.15, 0.03, 20, 16);
+      geo.rotateX(Math.PI / 2); // Z軸方向に向ける
+      geo.translate(0, 0, -10); // 根本から奥へ20伸びる形状
 
+      // ビームの外光（水色）
       const outerMat = new THREE.MeshBasicMaterial({
         color: 0x00ffff,
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.9,
         blending: THREE.AdditiveBlending
       });
       const beamMesh = new THREE.Mesh(geo, outerMat);
 
-      const coreGeo = new THREE.CylinderGeometry(0.06, 0.01, 30, 16);
+      // ビームの芯（白）
+      const coreGeo = new THREE.CylinderGeometry(0.05, 0.01, 20, 16);
       coreGeo.rotateX(Math.PI / 2);
-      coreGeo.translate(0, 0, -15);
+      coreGeo.translate(0, 0, -10);
       const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
       const coreMesh = new THREE.Mesh(coreGeo, coreMat);
 
       group.add(beamMesh);
       group.add(coreMesh);
 
-      // 初期位置（画面下端からの発射）と向きの設定
-      group.position.set(0, -5, 2); 
-      const targetVec = new THREE.Vector3(worldX, worldY, -10);
+      // 発射位置（画面下部中央・手前）
+      const startPos = new THREE.Vector3(0, -3, 2);
+      group.position.copy(startPos);
+
+      // タップした奥の方向を向く
+      const targetVec = new THREE.Vector3(targetX, targetY, targetZ);
       group.lookAt(targetVec);
 
       scene.add(group);
@@ -170,14 +181,15 @@
       return {
         group: group,
         mat: outerMat,
-        worldX: worldX, worldY: worldY,
-        smoothWorldX: worldX, smoothWorldY: worldY,
+        targetX: targetX, targetY: targetY, targetZ: targetZ,
+        smoothTargetX: targetX, smoothTargetY: targetY, smoothTargetZ: targetZ,
         videoX: videoX, videoY: videoY,
         template: templateData
       };
     }
 
-    function removeLastBeam() {
+    function removeLastBeam(e) {
+      if (e) e.stopPropagation();
       if (activeBeams.length > 0) {
         const lastBeam = activeBeams.pop();
         scene.remove(lastBeam.group);
@@ -185,24 +197,22 @@
       }
     }
 
-    function removeAllBeams() {
+    function removeAllBeams(e) {
+      if (e) e.stopPropagation();
       activeBeams.forEach(b => scene.remove(b.group));
       activeBeams = [];
       statusEl.textContent = '🗑 すべてのビームを削除しました';
     }
 
-    // --------------------------------------------------
-    // 人・物問わずリアルタイムで追従するアルゴリズム（テンプレートマッチング）
-    // --------------------------------------------------
     function trackObjects() {
       if (activeBeams.length === 0 || videoElement.readyState !== 4) return;
 
       processCanvas.width = 320;
       processCanvas.height = 240;
-      pCtx.drawImage(videoElement, 0, 0, processCanvas.width, processCanvas.height);
+      pCtx.drawImage(videoElement, 0, 0, 320, 240);
 
-      const frame = pCtx.getImageData(0, 0, processCanvas.width, processCanvas.height);
-      const searchRadius = 25; // 探索範囲
+      const frame = pCtx.getImageData(0, 0, 320, 240);
+      const searchRadius = 20;
 
       activeBeams.forEach(beam => {
         if (!beam.template) return;
@@ -215,17 +225,16 @@
         const tH = beam.template.height;
         const tData = beam.template.data;
 
-        // タップされた位置の周辺ピクセルパターンを高速スキャン
-        for (let dy = -searchRadius; dy <= searchRadius; dy += 3) {
-          for (let dx = -searchRadius; dx <= searchRadius; dx += 3) {
+        for (let dy = -searchRadius; dy <= searchRadius; dy += 4) {
+          for (let dx = -searchRadius; dx <= searchRadius; dx += 4) {
             const curX = Math.floor(beam.videoX + dx);
             const curY = Math.floor(beam.videoY + dy);
 
-            if (curX < 0 || curX >= processCanvas.width - tW || curY < 0 || curY >= processCanvas.height - tH) continue;
+            if (curX < 0 || curX >= 320 - tW || curY < 0 || curY >= 240 - tH) continue;
 
             let diff = 0;
-            for (let i = 0; i < tData.length; i += 12) { // 軽量スキャン
-              const fIdx = ((curY + Math.floor((i/4)/tW)) * processCanvas.width + (curX + ((i/4)%tW))) * 4;
+            for (let i = 0; i < tData.length; i += 16) {
+              const fIdx = ((curY + Math.floor((i/4)/tW)) * 320 + (curX + ((i/4)%tW))) * 4;
               diff += Math.abs(frame.data[fIdx] - tData[i]) + Math.abs(frame.data[fIdx+1] - tData[i+1]) + Math.abs(frame.data[fIdx+2] - tData[i+2]);
             }
 
@@ -237,16 +246,14 @@
           }
         }
 
-        // 新しい位置を更新
         beam.videoX = bestX;
         beam.videoY = bestY;
 
-        // 3D座標へ変換
         const aspect = window.innerWidth / window.innerHeight;
-        const normX = (bestX / processCanvas.width) * 2 - 1;
-        const normY = -(bestY / processCanvas.height) * 2 + 1;
-        beam.worldX = normX * 5 * aspect;
-        beam.worldY = normY * 5;
+        const normX = (bestX / 320) * 2 - 1;
+        const normY = -(bestY / 240) * 2 + 1;
+        beam.targetX = normX * 4 * aspect;
+        beam.targetY = normY * 4;
       });
     }
 
@@ -262,11 +269,12 @@
         });
         videoElement.srcObject = cameraStream;
       } catch (e) {
-        statusEl.textContent = 'カメラ起動エラー: ' + e.message;
+        statusEl.textContent = 'カメラの取得に失敗しました';
       }
     }
 
-    function toggleCamera() {
+    function toggleCamera(e) {
+      if (e) e.stopPropagation();
       currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
       startCamera(currentFacingMode);
     }
@@ -277,16 +285,13 @@
       trackObjects();
 
       activeBeams.forEach((beam) => {
-        // 対象物への吸い付き（ローパスフィルター）
-        beam.smoothWorldX += (beam.worldX - beam.smoothWorldX) * 0.2;
-        beam.smoothWorldY += (beam.worldY - beam.smoothWorldY) * 0.2;
+        beam.smoothTargetX += (beam.targetX - beam.smoothTargetX) * 0.2;
+        beam.smoothTargetY += (beam.targetY - beam.smoothTargetY) * 0.2;
 
-        // 発射位置（画面下）からタップした物体（奥）へ正しく照射
-        beam.group.position.set(0, -5, 2);
-        const targetVec = new THREE.Vector3(beam.smoothWorldX, beam.smoothWorldY, -10);
+        const targetVec = new THREE.Vector3(beam.smoothTargetX, beam.smoothTargetY, beam.targetZ);
         beam.group.lookAt(targetVec);
 
-        beam.mat.opacity = 0.75 + Math.sin(Date.now() * 0.01) * 0.15;
+        beam.mat.opacity = 0.75 + Math.sin(Date.now() * 0.01) * 0.2;
       });
 
       renderer.render(scene, camera3d);
