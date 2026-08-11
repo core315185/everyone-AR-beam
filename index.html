@@ -2,14 +2,15 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Fixed Events Edition</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Everyone AR Beam - Error Free Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
       margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
       background-color: #000; color: #fff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      touch-action: none; /* スマホのデフォルトスクロール・ズームを強制禁止 */
     }
 
     #start-overlay {
@@ -26,7 +27,7 @@
 
     #canvas2d {
       position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-      z-index: 10;
+      z-index: 10; pointer-events: auto;
     }
 
     #ui-container {
@@ -82,8 +83,10 @@
     let activeBeams = [];
 
     function resizeCanvas() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      ctx.scale(dpr, dpr);
     }
     window.addEventListener('resize', resizeCanvas);
 
@@ -96,43 +99,56 @@
       animate();
     });
 
-    // 画面タップでビーム生成
-    window.addEventListener('pointerdown', (e) => {
+    // タップイベントをキャンバスに直接紐付け（clickとtouchstartの両対応）
+    function handleTap(clientX, clientY) {
       if (startOverlay.style.display !== 'none') return;
-      if (e.target.tagName === 'BUTTON' || e.clientY > window.innerHeight - 80) return;
-
-      const x = e.clientX;
-      const y = e.clientY;
+      if (clientY > window.innerHeight - 80) return; // UIボタン領域は除外
 
       let templateData = null;
       let videoX = 0, videoY = 0;
 
-      if (videoElement.readyState === 4) {
-        processCanvas.width = 320;
-        processCanvas.height = 240;
-        pCtx.drawImage(videoElement, 0, 0, 320, 240);
-        
-        videoX = (x / window.innerWidth) * 320;
-        videoY = (y / window.innerHeight) * 240;
+      // カメラ準備OKなら画像パターンを抽出
+      if (videoElement.readyState >= 2) {
+        try {
+          processCanvas.width = 320;
+          processCanvas.height = 240;
+          pCtx.drawImage(videoElement, 0, 0, 320, 240);
+          
+          videoX = (clientX / window.innerWidth) * 320;
+          videoY = (clientY / window.innerHeight) * 240;
 
-        templateData = pCtx.getImageData(
-          Math.max(0, videoX - 15),
-          Math.max(0, videoY - 15),
-          30, 30
-        );
+          templateData = pCtx.getImageData(
+            Math.max(0, Math.min(290, videoX - 15)),
+            Math.max(0, Math.min(210, videoY - 15)),
+            30, 30
+          );
+        } catch (err) {
+          console.warn("Template extraction failed, fallback to static pos.", err);
+        }
       }
 
       activeBeams.push({
-        x: x,
-        y: y,
-        smoothX: x,
-        smoothY: y,
+        x: clientX,
+        y: clientY,
+        smoothX: clientX,
+        smoothY: clientY,
         videoX: videoX,
         videoY: videoY,
         template: templateData
       });
 
-      statusEl.textContent = `⚡ ビーム発射中！ (合計: ${activeBeams.length}本)`;
+      statusEl.textContent = `⚡ ビーム発射！ (合計: ${activeBeams.length}本)`;
+    }
+
+    // Touch & Mouse の両イベントを確実にキャッチ
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      handleTap(touch.clientX, touch.clientY);
+    }, { passive: false });
+
+    canvas.addEventListener('mousedown', (e) => {
+      handleTap(e.clientX, e.clientY);
     });
 
     // UIボタン機能
@@ -156,53 +172,57 @@
       startCamera(currentFacingMode);
     });
 
-    // 画像追従
+    // 安全なオプティカルフロー追従処理
     function trackObjects() {
-      if (activeBeams.length === 0 || videoElement.readyState !== 4) return;
+      if (activeBeams.length === 0 || videoElement.readyState < 2) return;
 
-      processCanvas.width = 320;
-      processCanvas.height = 240;
-      pCtx.drawImage(videoElement, 0, 0, 320, 240);
-      const frame = pCtx.getImageData(0, 0, 320, 240);
-      const searchRadius = 15;
+      try {
+        processCanvas.width = 320;
+        processCanvas.height = 240;
+        pCtx.drawImage(videoElement, 0, 0, 320, 240);
+        const frame = pCtx.getImageData(0, 0, 320, 240);
+        const searchRadius = 12;
 
-      activeBeams.forEach(beam => {
-        if (!beam.template) return;
+        activeBeams.forEach(beam => {
+          if (!beam.template) return;
 
-        let bestX = beam.videoX;
-        let bestY = beam.videoY;
-        let minDiff = Infinity;
+          let bestX = beam.videoX;
+          let bestY = beam.videoY;
+          let minDiff = Infinity;
 
-        const tW = beam.template.width;
-        const tH = beam.template.height;
-        const tData = beam.template.data;
+          const tW = beam.template.width;
+          const tH = beam.template.height;
+          const tData = beam.template.data;
 
-        for (let dy = -searchRadius; dy <= searchRadius; dy += 3) {
-          for (let dx = -searchRadius; dx <= searchRadius; dx += 3) {
-            const curX = Math.floor(beam.videoX + dx);
-            const curY = Math.floor(beam.videoY + dy);
+          for (let dy = -searchRadius; dy <= searchRadius; dy += 4) {
+            for (let dx = -searchRadius; dx <= searchRadius; dx += 4) {
+              const curX = Math.floor(beam.videoX + dx);
+              const curY = Math.floor(beam.videoY + dy);
 
-            if (curX < 0 || curX >= 320 - tW || curY < 0 || curY >= 240 - tH) continue;
+              if (curX < 0 || curX >= 320 - tW || curY < 0 || curY >= 240 - tH) continue;
 
-            let diff = 0;
-            for (let i = 0; i < tData.length; i += 16) {
-              const fIdx = ((curY + Math.floor((i/4)/tW)) * 320 + (curX + ((i/4)%tW))) * 4;
-              diff += Math.abs(frame.data[fIdx] - tData[i]) + Math.abs(frame.data[fIdx+1] - tData[i+1]) + Math.abs(frame.data[fIdx+2] - tData[i+2]);
-            }
+              let diff = 0;
+              for (let i = 0; i < tData.length; i += 32) { // 軽量化
+                const fIdx = ((curY + Math.floor((i/4)/tW)) * 320 + (curX + ((i/4)%tW))) * 4;
+                diff += Math.abs(frame.data[fIdx] - tData[i]) + Math.abs(frame.data[fIdx+1] - tData[i+1]);
+              }
 
-            if (diff < minDiff) {
-              minDiff = diff;
-              bestX = curX;
-              bestY = curY;
+              if (diff < minDiff) {
+                minDiff = diff;
+                bestX = curX;
+                bestY = curY;
+              }
             }
           }
-        }
 
-        beam.videoX = bestX;
-        beam.videoY = bestY;
-        beam.x = (bestX / 320) * window.innerWidth;
-        beam.y = (bestY / 240) * window.innerHeight;
-      });
+          beam.videoX = bestX;
+          beam.videoY = bestY;
+          beam.x = (bestX / 320) * window.innerWidth;
+          beam.y = (bestY / 240) * window.innerHeight;
+        });
+      } catch (err) {
+        // エラーが起きてもアニメーションループを止めない
+      }
     }
 
     async function startCamera(facingMode) {
@@ -224,56 +244,57 @@
     function animate() {
       requestAnimationFrame(animate);
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // 描画エリアのクリア
+      ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
       trackObjects();
 
-      const startX = canvas.width / 2;
-      const startY = canvas.height + 10;
+      const startX = window.innerWidth / 2;
+      const startY = window.innerHeight + 10;
 
       activeBeams.forEach((beam) => {
-        beam.smoothX += (beam.x - beam.smoothX) * 0.2;
-        beam.smoothY += (beam.y - beam.smoothY) * 0.2;
+        beam.smoothX += (beam.x - beam.smoothX) * 0.25;
+        beam.smoothY += (beam.y - beam.smoothY) * 0.25;
 
         const targetX = beam.smoothX;
         const targetY = beam.smoothY;
 
-        // 1. ビームの外光（シアン）
+        // 1. ビーム外光（発光）
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(startX, startY);
         ctx.lineTo(targetX, targetY);
         ctx.strokeStyle = 'rgba(0, 255, 255, 0.85)';
-        ctx.lineWidth = 20;
+        ctx.lineWidth = 16;
         ctx.lineCap = 'round';
         ctx.shadowColor = '#00ffff';
-        ctx.shadowBlur = 25;
+        ctx.shadowBlur = 20;
         ctx.stroke();
         ctx.restore();
 
-        // 2. ビームのコア（白）
+        // 2. ビーム芯（白）
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(startX, startY);
         ctx.lineTo(targetX, targetY);
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 8;
+        ctx.lineWidth = 6;
         ctx.lineCap = 'round';
         ctx.stroke();
         ctx.restore();
 
-        // 3. ロックオンリング
+        // 3. 照準ターゲット
         ctx.save();
         ctx.beginPath();
-        ctx.arc(targetX, targetY, 22 + Math.sin(Date.now() * 0.01) * 4, 0, Math.PI * 2);
+        ctx.arc(targetX, targetY, 20 + Math.sin(Date.now() * 0.01) * 3, 0, Math.PI * 2);
         ctx.strokeStyle = '#00ffff';
-        ctx.lineWidth = 4;
+        ctx.lineWidth = 3;
         ctx.shadowColor = '#00ffff';
-        ctx.shadowBlur = 12;
+        ctx.shadowBlur = 10;
         ctx.stroke();
 
         ctx.beginPath();
-        ctx.arc(targetX, targetY, 8, 0, Math.PI * 2);
+        ctx.arc(targetX, targetY, 6, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff';
         ctx.fill();
         ctx.restore();
