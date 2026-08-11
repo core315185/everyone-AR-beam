@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - AI-Powered Vision Edition</title>
+  <title>Everyone AR Beam - Ultra Fast Lite Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -51,13 +51,12 @@
   <!-- Three.js 3D Engine -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <!-- MediaPipe AI Vision CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
   <div id="start-overlay">
-    <button class="nav-btn" id="start-btn">🤖 AIビームARを開始</button>
+    <button class="nav-btn" id="start-btn">⚡ 爆速ARビームを開始</button>
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
@@ -65,7 +64,7 @@
   <canvas id="processCanvas" style="display:none;"></canvas>
 
   <div id="ui-container">
-    <div id="status">画面上の人や物をタップしてください（AI自動判定）</div>
+    <div id="status">画面上の人や物をタップしてください</div>
     <div class="btn-group">
       <button class="nav-btn" id="remove-btn">❌ 1本解除</button>
       <button class="nav-btn danger" id="clear-btn">🗑 全削除</button>
@@ -86,16 +85,18 @@
     let cameraStream = null;
     let activeBeams = [];
 
-    const PROC_W = 320;
-    const PROC_H = 240;
-    const TEMP_SIZE = 20;
+    // 高速化のため解像度を半減 (160x120)
+    const PROC_W = 160;
+    const PROC_H = 120;
+    const TEMP_SIZE = 14;
 
     let scene, camera, renderer;
     const Z_PLANE = -12;
 
-    // AI Detector (Face Detection)
     let faceDetector = null;
     let detectedFaces = [];
+    let frameCounter = 0;
+    let isAiProcessing = false;
 
     function initAI() {
       faceDetector = new FaceDetection({
@@ -107,6 +108,7 @@
       });
       faceDetector.onResults((results) => {
         detectedFaces = results.detections || [];
+        isAiProcessing = false;
       });
     }
 
@@ -115,9 +117,9 @@
       camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
       camera.position.set(0, 0, 0);
 
-      renderer = new THREE.WebGLRenderer({ canvas: canvas3d, alpha: true, antialias: true });
+      renderer = new THREE.WebGLRenderer({ canvas: canvas3d, alpha: true, antialias: false });
       renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setPixelRatio(1); // ピクセル比固定で高速化
 
       const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
       scene.add(ambientLight);
@@ -144,7 +146,7 @@
     function create3DBeamMesh() {
       const group = new THREE.Group();
 
-      const outerGeo = new THREE.CylinderGeometry(0.2, 0.05, 1, 16);
+      const outerGeo = new THREE.CylinderGeometry(0.18, 0.04, 1, 8); // ポリゴン数削減
       outerGeo.translate(0, 0.5, 0);
       const outerMat = new THREE.MeshBasicMaterial({
         color: 0x00ffff,
@@ -155,7 +157,7 @@
       const outerMesh = new THREE.Mesh(outerGeo, outerMat);
       group.add(outerMesh);
 
-      const innerGeo = new THREE.CylinderGeometry(0.08, 0.02, 1, 12);
+      const innerGeo = new THREE.CylinderGeometry(0.06, 0.02, 1, 6);
       innerGeo.translate(0, 0.5, 0);
       const innerMat = new THREE.MeshBasicMaterial({
         color: 0xffffff,
@@ -166,7 +168,7 @@
       const innerMesh = new THREE.Mesh(innerGeo, innerMat);
       group.add(innerMesh);
 
-      const ringGeo = new THREE.RingGeometry(0.25, 0.32, 32);
+      const ringGeo = new THREE.RingGeometry(0.22, 0.28, 16);
       const ringMat = new THREE.MeshBasicMaterial({
         color: 0x00ffff,
         side: THREE.DoubleSide,
@@ -177,7 +179,7 @@
       const ringMesh = new THREE.Mesh(ringGeo, ringMat);
       group.add(ringMesh);
 
-      const pCount = 35;
+      const pCount = 15; // 粒子数半減
       const pGeo = new THREE.BufferGeometry();
       const pPos = new Float32Array(pCount * 3);
       const pVel = [];
@@ -185,14 +187,14 @@
       for(let i = 0; i < pCount; i++) {
         pPos[i*3] = 0; pPos[i*3+1] = 0; pPos[i*3+2] = 0;
         pVel.push(new THREE.Vector3(
-          (Math.random() - 0.5) * 0.1,
-          (Math.random() - 0.5) * 0.1,
-          (Math.random() - 0.5) * 0.1
+          (Math.random() - 0.5) * 0.08,
+          (Math.random() - 0.5) * 0.08,
+          (Math.random() - 0.5) * 0.08
         ));
       }
       pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
       const pMat = new THREE.PointsMaterial({
-        color: 0x00ffff, size: 0.09, transparent: true, blending: THREE.AdditiveBlending
+        color: 0x00ffff, size: 0.08, transparent: true, blending: THREE.AdditiveBlending
       });
       const particleSystem = new THREE.Points(pGeo, pMat);
       group.add(particleSystem);
@@ -214,9 +216,9 @@
     function calculate3DOrigin(targetX, targetY) {
       const target3D = screenTo3D(targetX, targetY);
       const randomDir = new THREE.Vector3(
-        (Math.random() - 0.5) * 20,
-        (Math.random() - 0.5) * 20,
-        -5 - Math.random() * 25
+        (Math.random() - 0.5) * 16,
+        (Math.random() - 0.5) * 16,
+        -5 - Math.random() * 20
       );
       return target3D.clone().add(randomDir);
     }
@@ -242,7 +244,6 @@
       const normX = clientX / window.innerWidth;
       const normY = clientY / window.innerHeight;
 
-      // 1. AI (MediaPipe) によるタップ位置の顔判定
       detectedFaces.forEach((face, idx) => {
         const box = face.boundingBox;
         let boxX = box.xCenter;
@@ -251,7 +252,7 @@
         }
 
         const dist = Math.hypot(boxX - normX, box.yCenter - normY);
-        if (dist < 0.25) { // タップ領域近傍の場合AI追従モード適用
+        if (dist < 0.25) {
           isAiTarget = true;
           targetFaceIndex = idx;
         }
@@ -299,9 +300,7 @@
         meshData: meshData
       });
 
-      statusEl.textContent = isAiTarget 
-        ? `🤖 AI顔認識ロックオン発射！ (合計: ${activeBeams.length}本)`
-        : `⚡ 物体トラッキングビーム発射！ (合計: ${activeBeams.length}本)`;
+      statusEl.textContent = `⚡ ARビーム発射！ (合計: ${activeBeams.length}本)`;
     }
 
     canvas3d.addEventListener('touchstart', (e) => {
@@ -327,7 +326,7 @@
       e.stopPropagation();
       activeBeams.forEach(b => scene.remove(b.meshData.group));
       activeBeams = [];
-      statusEl.textContent = '🗑 すべての3Dビームを削除しました';
+      statusEl.textContent = '🗑 すべてのビームを削除しました';
     });
 
     document.getElementById('cam-btn').addEventListener('click', (e) => {
@@ -336,13 +335,15 @@
       startCamera(currentFacingMode);
     });
 
-    // AI + 高速パターンマッチングのハイブリッド処理
     function trackObjects() {
       if (activeBeams.length === 0 || videoElement.readyState < 2) return;
 
-      // AIモデルへ映像フレームを渡す
-      if (faceDetector) {
-        faceDetector.send({ image: videoElement });
+      frameCounter++;
+
+      // AI認識は3フレームに1回実行して負荷削減
+      if (faceDetector && frameCounter % 3 === 0 && !isAiProcessing) {
+        isAiProcessing = true;
+        faceDetector.send({ image: videoElement }).catch(() => { isAiProcessing = false; });
       }
 
       try {
@@ -355,7 +356,6 @@
         activeBeams.forEach(beam => {
           let updated = false;
 
-          // モードA: AI顔検出追従
           if (beam.isAiTarget && detectedFaces.length > 0) {
             const face = detectedFaces[beam.targetFaceIndex] || detectedFaces[0];
             if (face) {
@@ -370,7 +370,6 @@
             }
           }
 
-          // モードB: 輝度パターンマッチング (物体またはAIフォールバック)
           if (!updated && beam.lumTemplate) {
             const tLum = beam.lumTemplate;
             let bestX = beam.videoX;
@@ -380,9 +379,10 @@
             const predictX = beam.videoX + beam.vx;
             const predictY = beam.videoY + beam.vy;
 
-            const searchRangeCoarse = 60;
-            for (let dy = -searchRangeCoarse; dy <= searchRangeCoarse; dy += 4) {
-              for (let dx = -searchRangeCoarse; dx <= searchRangeCoarse; dx += 4) {
+            // 軽量化された探索（ステップ=3）
+            const searchRangeCoarse = 24;
+            for (let dy = -searchRangeCoarse; dy <= searchRangeCoarse; dy += 3) {
+              for (let dx = -searchRangeCoarse; dx <= searchRangeCoarse; dx += 3) {
                 const cx = Math.floor(predictX + dx);
                 const cy = Math.floor(predictY + dy);
                 if (cx < 0 || cx >= PROC_W - TEMP_SIZE || cy < 0 || cy >= PROC_H - TEMP_SIZE) continue;
@@ -404,37 +404,10 @@
               }
             }
 
-            const fineCenterX = bestX;
-            const fineCenterY = bestY;
-            minSad = Infinity;
-
-            for (let dy = -8; dy <= 8; dy++) {
-              for (let dx = -8; dx <= 8; dx++) {
-                const cx = fineCenterX + dx;
-                const cy = fineCenterY + dy;
-                if (cx < 0 || cx >= PROC_W - TEMP_SIZE || cy < 0 || cy >= PROC_H - TEMP_SIZE) continue;
-
-                let sad = 0;
-                for (let ty = 0; ty < TEMP_SIZE; ty++) {
-                  for (let tx = 0; tx < TEMP_SIZE; tx++) {
-                    const fIdx = (cy + ty) * PROC_W + (cx + tx);
-                    const tIdx = ty * TEMP_SIZE + tx;
-                    sad += Math.abs(frameLum[fIdx] - tLum[tIdx]);
-                  }
-                }
-
-                if (sad < minSad) {
-                  minSad = sad;
-                  bestX = cx;
-                  bestY = cy;
-                }
-              }
-            }
-
-            const avgSad = minSad / (TEMP_SIZE * TEMP_SIZE);
-            if (avgSad < 45) {
-              beam.vx = (bestX - beam.videoX) * 0.5;
-              beam.vy = (bestY - beam.videoY) * 0.5;
+            const avgSad = minSad / (TEMP_SIZE * TEMP_SIZE / 4);
+            if (avgSad < 50) {
+              beam.vx = (bestX - beam.videoX) * 0.4;
+              beam.vy = (bestY - beam.videoY) * 0.4;
 
               beam.videoX = bestX;
               beam.videoY = bestY;
@@ -445,19 +418,11 @@
               }
               beam.x = screenX;
               beam.y = (bestY / PROC_H) * window.innerHeight;
-
-              if (avgSad < 20) {
-                const crop = pCtx.getImageData(bestX, bestY, TEMP_SIZE, TEMP_SIZE);
-                const newLum = extractLuminance(crop);
-                for (let k = 0; k < tLum.length; k++) {
-                  tLum[k] = tLum[k] * 0.8 + newLum[k] * 0.2;
-                }
-              }
             } else {
               beam.videoX += beam.vx;
               beam.videoY += beam.vy;
-              beam.vx *= 0.8;
-              beam.vy *= 0.8;
+              beam.vx *= 0.7;
+              beam.vy *= 0.7;
             }
           }
         });
@@ -472,7 +437,7 @@
 
       try {
         cameraStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: facingMode, width: { ideal: 640 }, height: { ideal: 480 } }
+          video: { facingMode: facingMode, width: { ideal: 480 }, height: { ideal: 360 } }
         });
         videoElement.srcObject = cameraStream;
       } catch (e) {
@@ -488,8 +453,8 @@
       trackObjects();
 
       activeBeams.forEach((beam) => {
-        beam.smoothX += (beam.x - beam.smoothX) * 0.35;
-        beam.smoothY += (beam.y - beam.smoothY) * 0.35;
+        beam.smoothX += (beam.x - beam.smoothX) * 0.4;
+        beam.smoothY += (beam.y - beam.smoothY) * 0.4;
 
         const start3D = beam.origin3D;
         const target3D = screenTo3D(beam.smoothX, beam.smoothY);
@@ -514,9 +479,7 @@
         ringMesh.position.copy(target3D);
         ringMesh.quaternion.copy(quaternion);
         ringMesh.rotateX(Math.PI / 2);
-        ringMesh.rotation.z += 0.04;
-        const scalePulse = 1 + Math.sin(Date.now() * 0.01) * 0.2;
-        ringMesh.scale.set(scalePulse, scalePulse, scalePulse);
+        ringMesh.rotation.z += 0.05;
 
         particleSystem.position.copy(target3D);
         const positions = particleSystem.geometry.attributes.position.array;
@@ -526,7 +489,7 @@
           positions[i*3+1] += pVel[i].y;
           positions[i*3+2] += pVel[i].z;
 
-          if (Math.abs(positions[i*3]) > 0.5 || Math.abs(positions[i*3+1]) > 0.5 || Math.abs(positions[i*3+2]) > 0.5) {
+          if (Math.abs(positions[i*3]) > 0.4 || Math.abs(positions[i*3+1]) > 0.4 || Math.abs(positions[i*3+2]) > 0.4) {
             positions[i*3] = 0; positions[i*3+1] = 0; positions[i*3+2] = 0;
           }
         }
