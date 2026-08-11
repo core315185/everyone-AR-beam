@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Multi Target Edition</title>
+  <title>Everyone AR Beam - Multi-Target Expansion</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -25,13 +25,12 @@
 
     #canvas3d {
       position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-      z-index: 5;
-      pointer-events: auto; /* タップイベントを受け取るために変更 */
+      z-index: 5; pointer-events: auto;
     }
 
     #ui-container {
-      position: absolute; bottom: 30px; left: 0; width: 100%; z-index: 10;
-      display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 0 20px;
+      position: absolute; bottom: 25px; left: 0; width: 100%; z-index: 10;
+      display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 0 15px;
       pointer-events: none;
     }
     #status {
@@ -39,25 +38,27 @@
       padding: 8px 18px; border-radius: 20px; border: 1px solid #3b82f6; text-align: center;
       pointer-events: auto;
     }
-    .btn-group { display: flex; gap: 8px; pointer-events: auto; }
+    .btn-group { display: flex; gap: 6px; pointer-events: auto; flex-wrap: wrap; justify-content: center; }
     button.nav-btn {
       background: #3b82f6; color: #fff; border: none;
-      padding: 10px 18px; border-radius: 20px; font-size: 14px; font-weight: bold; cursor: pointer;
+      padding: 10px 14px; border-radius: 18px; font-size: 13px; font-weight: bold; cursor: pointer;
       box-shadow: 0 4px 10px rgba(0,0,0,0.3);
     }
-    button.nav-btn.danger {
-      background: #ef4444;
-    }
+    button.nav-btn.danger { background: #ef4444; }
+    button.nav-btn.mode { background: #8b5cf6; }
   </style>
 
+  <!-- MediaPipe 各種検出モジュール & Three.js -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
   <div id="start-overlay">
-    <button class="nav-btn" onclick="startApp()">👆 タップしてARを開始</button>
+    <button class="nav-btn" onclick="startApp()">👆 タップして多機能ARを開始</button>
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
@@ -66,9 +67,10 @@
   <div id="ui-container">
     <div id="status">画面をタップしてビームを追加してください</div>
     <div class="btn-group">
-      <button class="nav-btn" onclick="removeLastBeam()">❌ 選択解除 (1本)</button>
+      <button class="nav-btn mode" onclick="switchTargetMode()">🎯 モード: 手 (Hands)</button>
+      <button class="nav-btn" onclick="removeLastBeam()">❌ 選択解除</button>
       <button class="nav-btn danger" onclick="removeAllBeams()">🗑 全削除</button>
-      <button class="nav-btn" onclick="toggleCamera()">📷 カメラ切替</button>
+      <button class="nav-btn" onclick="toggleCamera()">📷 カメラ</button>
     </div>
   </div>
 
@@ -82,19 +84,21 @@
     let currentFacingMode = 'environment';
     let cameraInstance = null;
 
-    // 複数ビームを管理する配列
+    // 追従モード: 'hands' | 'face' | 'pose'
+    const targetModes = ['hands', 'face', 'pose'];
+    const targetModeLabels = { hands: '手 (Hands)', face: '顔 (Face Mesh)', pose: '全身 (Pose)' };
+    let currentModeIndex = 0;
+
     let activeBeams = [];
 
     function startApp() {
       startOverlay.style.display = 'none';
       initThree();
-      initMediaPipe();
+      initDetectors();
       startCamera(currentFacingMode);
 
-      // タップ/クリックで新しいビームを固定・生成するイベント
       canvas.addEventListener('pointerdown', (e) => {
-        // UIボタン領域のクリックを弾く
-        if (e.clientY > window.innerHeight - 90) return;
+        if (e.clientY > window.innerHeight - 100) return;
 
         const normX = (e.clientX / window.innerWidth) * 2 - 1;
         const normY = -(e.clientY / window.innerHeight) * 2 + 1;
@@ -103,11 +107,10 @@
         const worldX = normX * 5 * aspect;
         const worldY = normY * 5;
 
-        // ビームオブジェクトを作成して追加
-        const beam = createBeamObject(worldX, worldY);
+        const beam = createBeamObject(worldX, worldY, 0, worldX, worldY, -20);
         activeBeams.push(beam);
 
-        statusEl.textContent = `⚡ ビーム設置完了 (合計: ${activeBeams.length}本)`;
+        statusEl.textContent = `⚡ ビーム追加 (合計: ${activeBeams.length}本)`;
       });
 
       animate();
@@ -123,12 +126,10 @@
       camera3d.position.z = 10;
     }
 
-    // 3Dビームの生成関数
-    function createBeamObject(x, y) {
+    function createBeamObject(startX, startY, startZ, targetX, targetY, targetZ) {
       const group = new THREE.Group();
 
-      // ビーム本体
-      const geo = new THREE.CylinderGeometry(0.25, 0.04, 30, 16);
+      const geo = new THREE.CylinderGeometry(0.2, 0.03, 30, 16);
       geo.rotateX(Math.PI / 2);
       geo.translate(0, 0, -15);
 
@@ -140,8 +141,7 @@
       });
       const beamMesh = new THREE.Mesh(geo, outerMat);
 
-      // 芯（ホワイトコア）
-      const coreGeo = new THREE.CylinderGeometry(0.08, 0.015, 30, 16);
+      const coreGeo = new THREE.CylinderGeometry(0.06, 0.01, 30, 16);
       coreGeo.rotateX(Math.PI / 2);
       coreGeo.translate(0, 0, -15);
       const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -149,81 +149,134 @@
 
       group.add(beamMesh);
       group.add(coreMesh);
-
-      // 初期位置とターゲットの設定
-      group.position.set(x, y, 0);
-
-      // 手前（タップ位置）から奥へ向けて照射する角度の初期化
-      const targetVec = new THREE.Vector3(x, y, -20);
-      group.lookAt(targetVec);
-
       scene.add(group);
 
       return {
         group: group,
         mat: outerMat,
-        targetX: x,
-        targetY: y,
-        smoothX: x,
-        smoothY: y
+        startX: startX, startY: startY, startZ: startZ,
+        targetX: targetX, targetY: targetY, targetZ: targetZ,
+        smoothStartX: startX, smoothStartY: startY, smoothStartZ: startZ,
+        smoothTargetX: targetX, smoothTargetY: targetY, smoothTargetZ: targetZ
       };
     }
 
-    // 最後に追加したビームを解除
     function removeLastBeam() {
       if (activeBeams.length > 0) {
         const lastBeam = activeBeams.pop();
         scene.remove(lastBeam.group);
-        statusEl.textContent = `❌ 1本解除しました (残り: ${activeBeams.length}本)`;
-      } else {
-        statusEl.textContent = '解除できるビームはありません';
+        statusEl.textContent = `❌ 1本解除 (残り: ${activeBeams.length}本)`;
       }
     }
 
-    // すべてのビームを一括解除
     function removeAllBeams() {
       activeBeams.forEach(b => scene.remove(b.group));
       activeBeams = [];
       statusEl.textContent = '🗑 すべてのビームを削除しました';
     }
 
-    // MediaPipe Hands (かざした手の指先に合わせて最新のビーム位置を更新)
-    let hands = null;
-    function initMediaPipe() {
-      hands = new Hands({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-      });
+    // --------------------------------------------------
+    // 各種AI検出ロジック (Hands, Face Mesh, Pose)
+    // --------------------------------------------------
+    let handsDetector, faceMeshDetector, poseDetector;
 
-      hands.setOptions({
-        maxNumHands: 1,
-        modelComplexity: 0,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-      });
+    function initDetectors() {
+      // 1. Hands
+      handsDetector = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+      handsDetector.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+      handsDetector.onResults(onHandsResults);
 
-      hands.onResults((results) => {
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-          const landmarks = results.multiHandLandmarks[0];
-          const tip = landmarks[8];
+      // 2. Face Mesh
+      faceMeshDetector = new FaceMesh({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
+      faceMeshDetector.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+      faceMeshDetector.onResults(onFaceResults);
 
-          const isUser = (currentFacingMode === 'user');
-          const rawX = isUser ? (1 - tip.x) : tip.x;
+      // 3. Pose
+      poseDetector = new Pose({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });
+      poseDetector.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+      poseDetector.onResults(onPoseResults);
+    }
 
-          const normX = (rawX - 0.5) * 2;
-          const normY = (0.5 - tip.y) * 2;
+    function updateTargetBeamVector(startX, startY, startZ, targetX, targetY, targetZ) {
+      if (activeBeams.length > 0) {
+        const currentBeam = activeBeams[activeBeams.length - 1];
+        currentBeam.startX = startX; currentBeam.startY = startY; currentBeam.startZ = startZ;
+        currentBeam.targetX = targetX; currentBeam.targetY = targetY; currentBeam.targetZ = targetZ;
+      }
+    }
 
-          const aspect = window.innerWidth / window.innerHeight;
-          const targetX = normX * 5 * aspect;
-          const targetY = normY * 5;
+    // 手の検出コールバック
+    function onHandsResults(results) {
+      if (targetModes[currentModeIndex] !== 'hands') return;
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const lm = results.multiHandLandmarks[0];
+        const wrist = lm[0], tip = lm[8];
+        const isUser = (currentFacingMode === 'user');
+        const aspect = window.innerWidth / window.innerHeight;
 
-          // 手が認識された場合、最後に設置したビームの位置と角度を動的に更新
-          if (activeBeams.length > 0) {
-            const currentBeam = activeBeams[activeBeams.length - 1];
-            currentBeam.targetX = targetX;
-            currentBeam.targetY = targetY;
-          }
-        }
-      });
+        const sX = ((isUser ? 1 - wrist.x : wrist.x) - 0.5) * 10 * aspect;
+        const sY = (0.5 - wrist.y) * 10;
+        const sZ = -wrist.z * 10;
+
+        const tX = ((isUser ? 1 - tip.x : tip.x) - 0.5) * 10 * aspect;
+        const tY = (0.5 - tip.y) * 10;
+        
+        const dirX = tX - sX, dirY = tY - sY;
+        updateTargetBeamVector(sX, sY, sZ, sX + dirX * 4, sY + dirY * 4, -20);
+        statusEl.textContent = '🎯 【手】指先と傾きに追従中';
+      }
+    }
+
+    // 顔の検出コールバック
+    function onFaceResults(results) {
+      if (targetModes[currentModeIndex] !== 'face') return;
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const lm = results.multiFaceLandmarks[0];
+        const nose = lm[1], chin = lm[152]; // 鼻先と顎
+        const isUser = (currentFacingMode === 'user');
+        const aspect = window.innerWidth / window.innerHeight;
+
+        const sX = ((isUser ? 1 - nose.x : nose.x) - 0.5) * 10 * aspect;
+        const sY = (0.5 - nose.y) * 10;
+        const sZ = 0;
+
+        const cX = ((isUser ? 1 - chin.x : chin.x) - 0.5) * 10 * aspect;
+        const cY = (0.5 - chin.y) * 10;
+
+        const dirX = sX - cX, dirY = sY - cY;
+        updateTargetBeamVector(sX, sY, sZ, sX + dirX * 5, sY + dirY * 5, -20);
+        statusEl.textContent = '🎯 【顔】顔の向き・傾きに追従中';
+      }
+    }
+
+    // ポーズの検出コールバック
+    function onPoseResults(results) {
+      if (targetModes[currentModeIndex] !== 'pose') return;
+      if (results.poseLandmarks) {
+        const lm = results.poseLandmarks;
+        const shoulder = lm[12], wrist = lm[16]; // 右肩と右手首
+        const isUser = (currentFacingMode === 'user');
+        const aspect = window.innerWidth / window.innerHeight;
+
+        const sX = ((isUser ? 1 - shoulder.x : shoulder.x) - 0.5) * 10 * aspect;
+        const sY = (0.5 - shoulder.y) * 10;
+        const sZ = 0;
+
+        const wX = ((isUser ? 1 - wrist.x : wrist.x) - 0.5) * 10 * aspect;
+        const wY = (0.5 - wrist.y) * 10;
+
+        const dirX = wX - sX, dirY = wY - sY;
+        updateTargetBeamVector(sX, sY, sZ, sX + dirX * 3, sY + dirY * 3, -20);
+        statusEl.textContent = '🎯 【全身】腕の振りとボディラインに追従中';
+      }
+    }
+
+    function switchTargetMode() {
+      currentModeIndex = (currentModeIndex + 1) % targetModes.length;
+      const modeKey = targetModes[currentModeIndex];
+      const btn = document.querySelector('.nav-btn.mode');
+      btn.textContent = `🎯 モード: ${targetModeLabels[modeKey]}`;
+      statusEl.textContent = `モード切替: ${targetModeLabels[modeKey]}`;
     }
 
     function startCamera(facingMode) {
@@ -232,11 +285,12 @@
 
       cameraInstance = new Camera(videoElement, {
         onFrame: async () => {
-          if (hands) await hands.send({ image: videoElement });
+          const mode = targetModes[currentModeIndex];
+          if (mode === 'hands' && handsDetector) await handsDetector.send({ image: videoElement });
+          else if (mode === 'face' && faceMeshDetector) await faceMeshDetector.send({ image: videoElement });
+          else if (mode === 'pose' && poseDetector) await poseDetector.send({ image: videoElement });
         },
-        width: 640,
-        height: 480,
-        facingMode: facingMode
+        width: 640, height: 480, facingMode: facingMode
       });
 
       cameraInstance.start();
@@ -250,19 +304,20 @@
     function animate() {
       requestAnimationFrame(animate);
 
-      // 全ての活性化ビームの描画更新
       activeBeams.forEach((beam) => {
-        // 位置のなめらか移動（角度追従）
-        beam.smoothX += (beam.targetX - beam.smoothX) * 0.2;
-        beam.smoothY += (beam.targetY - beam.smoothY) * 0.2;
+        beam.smoothStartX += (beam.startX - beam.smoothStartX) * 0.25;
+        beam.smoothStartY += (beam.startY - beam.smoothStartY) * 0.25;
+        beam.smoothStartZ += (beam.startZ - beam.smoothStartZ) * 0.25;
 
-        beam.group.position.set(beam.smoothX, beam.smoothY, 0);
+        beam.smoothTargetX += (beam.targetX - beam.smoothTargetX) * 0.25;
+        beam.smoothTargetY += (beam.targetY - beam.smoothTargetY) * 0.25;
+        beam.smoothTargetZ += (beam.targetZ - beam.smoothTargetZ) * 0.25;
 
-        // カメラ奥に向ける回転角度の追従計算
-        const targetVec = new THREE.Vector3(beam.smoothX, beam.smoothY, -20);
+        beam.group.position.set(beam.smoothStartX, beam.smoothStartY, beam.smoothStartZ);
+
+        const targetVec = new THREE.Vector3(beam.smoothTargetX, beam.smoothTargetY, beam.smoothTargetZ);
         beam.group.lookAt(targetVec);
 
-        // パルス（点滅）エフェクト
         beam.mat.opacity = 0.75 + Math.sin(Date.now() * 0.01) * 0.15;
       });
 
