@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Click to Start</title>
+  <title>Everyone AR Beam - Optimized Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -12,12 +12,11 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
 
-    /* 初期表示（黒画面）を覆うオーバーレイ */
     #start-overlay {
       position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
       background-color: rgba(0,0,0,0.9);
       z-index: 30; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 30px;
-      cursor: pointer; /* 画面全体をクリック可能に */
+      cursor: pointer;
     }
 
     #loading-screen {
@@ -34,36 +33,34 @@
     #webcam {
       position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
       object-fit: cover; z-index: 1; transform: scaleX(-1);
-      display: none; /* 初期は非表示 */
+      display: none;
     }
     #canvas3d { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; pointer-events: none; }
     #ai-debug-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 3; pointer-events: none; opacity: 0.7; }
 
     #ui-container {
       position: absolute; bottom: 30px; left: 0; width: 100%; z-index: 10;
-      display: none; flex-direction: column; align-items: center; gap: 15px; padding: 0 20px;
+      display: none; flex-direction: column; align-items: center; gap: 10px; padding: 0 20px;
     }
     #status {
-      font-size: 14px; background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(5px);
-      padding: 10px 20px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.2);
+      font-size: 13px; background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(5px);
+      padding: 8px 18px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.15);
     }
+    .btn-group { display: flex; gap: 8px; pointer-events: auto; }
     button.nav-btn {
-      background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.3);
-      padding: 12px 24px; border-radius: 15px; font-size: 14px; font-weight: 600; cursor: pointer;
-      backdrop-filter: blur(10px); transition: background 0.2s; pointer-events: auto;
+      background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.2);
+      padding: 10px 20px; border-radius: 12px; font-size: 13px; font-weight: 600; cursor: pointer;
     }
     
-    /* 巨大なスタートボタン */
     #big-start-btn {
       background: linear-gradient(135deg, #3b82f6, #a855f7);
-      color: white; border: none; padding: 20px 40px; font-size: 20px; font-weight: bold;
-      border-radius: 50px; box-shadow: 0 10px 30px rgba(59, 130, 246, 0.5);
-      cursor: pointer; animation: pulse 2s infinite;
+      color: white; border: none; padding: 18px 36px; font-size: 18px; font-weight: bold;
+      border-radius: 40px; cursor: pointer; animation: pulse 2s infinite;
     }
     @keyframes pulse {
-      0% { transform: scale(1); box-shadow: 0 10px 30px rgba(59, 130, 246, 0.5); }
-      50% { transform: scale(1.05); box-shadow: 0 10px 50px rgba(59, 130, 246, 0.7); }
-      100% { transform: scale(1); box-shadow: 0 10px 30px rgba(59, 130, 246, 0.5); }
+      0% { transform: scale(1); }
+      50% { transform: scale(1.03); }
+      100% { transform: scale(1); }
     }
   </style>
 
@@ -75,21 +72,18 @@
 </head>
 <body>
 
-  <!-- 【追加】画面全体を覆うクリック開始オーバーレイ -->
   <div id="start-overlay" onclick="initializeEverything()">
     <button id="big-start-btn">👆 タップしてARを開始</button>
-    <div style="font-size: 14px; color: #94a3b8; text-align: center; padding: 0 20px;">
+    <div style="font-size: 13px; color: #94a3b8; text-align: center; padding: 0 20px;">
       カメラの許可ポップアップが表示されたら<br>「許可」を押してください。
     </div>
   </div>
 
-  <!-- AI読込中画面 -->
   <div id="loading-screen">
     <div class="spinner"></div>
-    <div style="font-size: 18px; font-weight: bold; background: linear-gradient(90deg, #60a5fa, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+    <div style="font-size: 16px; font-weight: bold; color: white;">
       AI 物体認識モデルをロード中...
     </div>
-    <div style="font-size: 12px; color: #94a3b8;">初回のみ10秒ほどかかります</div>
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
@@ -98,7 +92,10 @@
 
   <div id="ui-container">
     <div id="status"> AI ロックオン準備完了</div>
-    <button class="nav-btn" onclick="toggleCamera()">📷 カメラ切替</button>
+    <div class="btn-group">
+      <button class="nav-btn" onclick="toggleDebug()">⚙ AI枠切替</button>
+      <button class="nav-btn" onclick="toggleCamera()">📷 カメラ切替</button>
+    </div>
   </div>
 
   <script>
@@ -108,83 +105,85 @@
     let loadingScreen = document.getElementById('loading-screen');
     let startOverlay = document.getElementById('start-overlay');
     let uiContainer = document.getElementById('ui-container');
+    let debugCanvas = document.getElementById('ai-debug-canvas');
 
     let cocoSsdModel = null;
     let isDetecting = false;
     let lastDetectionResult = null;
-    let cameraInstance = null; // カメラインスタンスをグローバルに
+    let cameraInstance = null;
+    let showDebug = true; // AIのデバッグ枠を表示するか
 
-    const debugCanvas = document.getElementById('ai-debug-canvas');
     const debugCtx = debugCanvas.getContext('2d');
 
+    // 追従をさらに滑らかにするための設定
     let smoothTargetX = window.innerWidth / 2;
     let smoothTargetY = window.innerHeight / 2;
 
-    // --------------------------------------------------
-    // 【重要】ユーザーのクリックで全初期化を開始する
-    // --------------------------------------------------
     async function initializeEverything() {
-      // 初期オーバーレイを消す
       startOverlay.style.display = 'none';
-      // ローディング画面とビデオを表示状態に
       loadingScreen.style.display = 'flex';
       videoElement.style.display = 'block';
 
-      statusEl.textContent = 'カメラとAIの初期化を開始します...';
-
-      // 1. まずカメラを開始（許可ポップアップを出すため）
+      // 1. カメラ開始
       await startCamera(currentFacingMode);
 
-      // 2. 次にAIモデルのロードを開始
+      // 2. Three.jsとAIロードを同時に開始して待つ
+      initThreeJs();
       await initAI();
       
-      // 3. UIを表示
+      // 3. UIを表示してレンダリングループ開始
+      loadingScreen.style.display = 'none';
       uiContainer.style.display = 'flex';
-      
-      // 4. レンダリングループ開始
       animate();
     }
 
     // --------------------------------------------------
-    // 3D ビーム描画 (Three.js)
+    // Three.js (3D空間)
     // --------------------------------------------------
-    const canvas3d = document.getElementById('canvas3d');
-    const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, alpha: true, antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    let renderer, scene, camera3d, beamGroup, innerMat, outerMat;
 
-    const scene = new THREE.Scene();
-    const camera3d = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera3d.position.z = 10;
+    function initThreeJs() {
+      renderer = new THREE.WebGLRenderer({ canvas: canvas3d, alpha: true, antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // ピクセル比を下げて負荷軽減
 
-    const beamGroup = new THREE.Group();
-    const innerGeo = new THREE.CylinderGeometry(0.06, 0.02, 30, 16);
-    innerGeo.rotateX(Math.PI / 2); innerGeo.translate(0, 0, -15);
-    const innerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending });
-    const innerMesh = new THREE.Mesh(innerGeo, innerMat);
-    const outerGeo = new THREE.CylinderGeometry(0.18, 0.06, 30, 16);
-    outerGeo.rotateX(Math.PI / 2); outerGeo.translate(0, 0, -15);
-    const outerMat = new THREE.MeshBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending });
-    const outerMesh = new THREE.Mesh(outerGeo, outerMat);
-    beamGroup.add(outerMesh); beamGroup.add(innerMesh);
-    beamGroup.visible = false; scene.add(beamGroup);
+      scene = new THREE.Scene();
+      // 視野角(FOV)を少し広げて、ビームが映り込みやすくする
+      camera3d = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera3d.position.set(0, 0, 8); // カメラ位置を調整
+
+      beamGroup = new THREE.Group();
+      
+      // 芯 (コア)
+      const innerGeo = new THREE.CylinderGeometry(0.04, 0.015, 20, 12); // ジオメトリをシンプルに
+      innerGeo.rotateX(Math.PI / 2); innerGeo.translate(0, 0, -10);
+      innerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending });
+      const innerMesh = new THREE.Mesh(innerGeo, innerMat);
+
+      // オーラ
+      const outerGeo = new THREE.CylinderGeometry(0.15, 0.05, 20, 12);
+      outerGeo.rotateX(Math.PI / 2); outerGeo.translate(0, 0, -10);
+      outerMat = new THREE.MeshBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending });
+      const outerMesh = new THREE.Mesh(outerGeo, outerMat);
+
+      beamGroup.add(outerMesh); beamGroup.add(innerMesh);
+      beamGroup.visible = false; scene.add(beamGroup);
+    }
 
     // --------------------------------------------------
-    // AI 物体認識 (TensorFlow.js)
+    // AI 物体認識 (TensorFlow.js) - 負荷軽減設定
     // --------------------------------------------------
     async function initAI() {
-      if (cocoSsdModel) return; // すでにロードされていれば何もしない
+      if (cocoSsdModel) return;
       try {
         statusEl.textContent = 'AIモデルをダウンロード中... (数MBあります)';
+        // 【最適化】mobilenet_v2を明示的に使用
         cocoSsdModel = await cocoSsd.load({ base: 'mobilenet_v2' });
-        console.log("AI Model Loaded");
-        loadingScreen.style.display = 'none';
-        statusEl.textContent = 'AI準備完了！物体をかざしてください';
+        statusEl.textContent = 'AI準備完了！人やボトルをかざしてください';
       } catch (e) {
-        console.error("AI Load Error:", e);
-        statusEl.textContent = ' AIロード失敗。ページを再読み込みしてください';
+        statusEl.textContent = ' AIロード失敗。通信環境を確認してください';
         loadingScreen.style.display = 'none';
-        alert("AIモデルのロードに失敗しました。ネット環境を確認して再試行してください。");
+        alert("AIモデルのロードに失敗しました。\nネット接続を確認し、ページを再読み込みしてください。");
       }
     }
 
@@ -194,39 +193,62 @@
 
       const vw = videoElement.videoWidth;
       const vh = videoElement.videoHeight;
-      if (vw === 0) { isDetecting = false; return; } // ビデオがまだ準備できていない
+      if (vw === 0) { isDetecting = false; setTimeout(startAIPreview, 200); return; } // まだ起動してなければ待つ
 
-      debugCanvas.width = vw;
-      debugCanvas.height = vh;
+      // 【最適化】AI処理用のキャンバスサイズを小さく保つ (320x240)
+      const aiProcessWidth = 320;
+      const aiProcessHeight = 240;
+      processCanvas.width = aiProcessWidth;
+      processCanvas.height = aiProcessHeight;
+      
+      processCtx.save();
+      if (currentFacingMode === 'user') { processCtx.translate(aiProcessWidth, 0); processCtx.scale(-1, 1); }
+      processCtx.drawImage(videoElement, 0, 0, vw, vh, 0, 0, aiProcessWidth, aiProcessHeight);
+      processCtx.restore();
 
-      const predictions = await cocoSsdModel.detect(videoElement, { maxNumBoxes: 1, minScore: 0.5 });
+      // 小さい画像でAI推論を実行（大幅に軽量化）
+      const predictions = await cocoSsdModel.detect(processCanvas, { maxNumBoxes: 1, minScore: 0.4 });
+      
+      // 結果の座標をビデオ解像度に合わせて復元
+      if (predictions.length > 0) {
+        const p = predictions[0];
+        const scaleX = vw / aiProcessWidth;
+        const scaleY = vh / aiProcessHeight;
+        p.bbox = [p.bbox[0] * scaleX, p.bbox[1] * scaleY, p.bbox[2] * scaleX, p.bbox[3] * scaleY];
+      }
+
       lastDetectionResult = predictions;
-      drawAIDebug(predictions, vw, vh);
+      if (showDebug) drawAIDebug(predictions, vw, vh);
 
       isDetecting = false;
-      requestAnimationFrame(startAIPreview);
+      // 【最適化】AI処理を少し間引く (約15fps相当に)
+      setTimeout(startAIPreview, 66);
     }
 
+    const processCanvas = document.createElement('canvas');
+    const processCtx = processCanvas.getContext('2d');
+
     function drawAIDebug(predictions, vw, vh) {
+      debugCanvas.width = vw; debugCanvas.height = vh;
       debugCtx.clearRect(0, 0, vw, vh);
       if (predictions.length === 0) return;
       const p = predictions[0];
       const [x, y, width, height] = p.bbox;
       debugCtx.strokeStyle = '#3b82f6'; debugCtx.lineWidth = 4;
       debugCtx.strokeRect(x, y, width, height);
-      debugCtx.fillStyle = 'rgba(59, 130, 246, 0.8)'; debugCtx.fillRect(x, y - 30, width, 30);
-      debugCtx.fillStyle = '#fff'; debugCtx.font = '24px bold sans-serif';
-      debugCtx.fillText(`${p.class} (${Math.round(p.score * 100)}%)`, x + 5, y - 7);
+      debugCtx.fillStyle = '#fff'; debugCtx.font = '20px sans-serif';
+      debugCtx.fillText(`${p.class}`, x, y > 25 ? y - 10 : y + 20);
     }
 
     // --------------------------------------------------
-    // AR 追従
+    // AR 追従 & 3D座標変換
     // --------------------------------------------------
     function updateBeamTracking() {
       if (!lastDetectionResult || lastDetectionResult.length === 0) {
         beamGroup.visible = false;
-        smoothTargetX += (window.innerWidth / 2 - smoothTargetX) * 0.1;
-        smoothTargetY += (window.innerHeight / 2 - smoothTargetY) * 0.1;
+        smoothTargetX += (window.innerWidth / 2 - smoothTargetX) * 0.05;
+        smoothTargetY += (window.innerHeight / 2 - smoothTargetY) * 0.05;
+        statusEl.textContent = ' AI ロックオン待機中... 人やボトルをかざしてください';
         return;
       }
       beamGroup.visible = true;
@@ -235,17 +257,28 @@
       const vw = videoElement.videoWidth; const vh = videoElement.videoHeight;
       let centerX = bboxX + bboxW / 2; let centerY = bboxY + bboxH / 2;
       if (currentFacingMode === 'user') { centerX = vw - centerX; }
+      
       const targetX = (centerX / vw) * window.innerWidth;
       const targetY = (centerY / vh) * window.innerHeight;
       statusEl.textContent = `🎯 ${p.class.toUpperCase()} をロックオン！`;
-      smoothTargetX += (targetX - smoothTargetX) * 0.2;
-      smoothTargetY += (targetY - smoothTargetY) * 0.2;
-      const aspect = window.innerWidth / window.innerHeight;
+      
+      // ローパスフィルター (Smoothing)
+      smoothTargetX += (targetX - smoothTargetX) * 0.15;
+      smoothTargetY += (targetY - smoothTargetY) * 0.15;
+      
+      // Three.js 3D世界座標系への変換
       const normX = (smoothTargetX / window.innerWidth) * 2 - 1;
       const normY = -(smoothTargetY / window.innerHeight) * 2 + 1;
-      const originX = 0; const originY = -5; const originZ = -1;
-      const targetZ3D = -10; const targetX3D = normX * 8 * aspect; const targetY3D = normY * 8;
-      beamGroup.position.set(originX, originY, originZ);
+      
+      // ビームの発生起点 (画面中央から画面奥へ向かうように配置)
+      beamGroup.position.set(0, 0, -2);
+      
+      // ビームのターゲット位置
+      const aspect = window.innerWidth / window.innerHeight;
+      const targetZ3D = -15; 
+      const targetX3D = normX * 10 * aspect;
+      const targetY3D = normY * 10;
+      
       const targetVec = new THREE.Vector3(targetX3D, targetY3D, targetZ3D);
       beamGroup.lookAt(targetVec);
     }
@@ -253,59 +286,33 @@
     // --------------------------------------------------
     // カメラ制御
     // --------------------------------------------------
-    // MediaPipeのCamera Utilsクラスを拡張してfacingModeに対応させるシンプルなラッパー
     class SmartCamera {
-      constructor(videoElement, options) {
-        this.videoElement = videoElement;
-        this.options = options;
-        this.stream = null;
-      }
+      constructor(videoElement, options) { this.videoElement = videoElement; this.options = options; this.stream = null; }
       async start() {
-        const constraints = {
-          video: {
-            width: { ideal: this.options.width },
-            height: { ideal: this.options.height },
-            facingMode: this.options.facingMode
-          }
-        };
-        try {
-          this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-          this.videoElement.srcObject = this.stream;
-          // ビデオのメタデータがロードされたらAI処理を開始
-          this.videoElement.onloadedmetadata = () => {
-            this.videoElement.play();
-            startAIPreview();
-          };
-        } catch (e) {
-          throw new Error("カメラへのアクセスが拒否されたか、デバイスが見つかりません。");
-        }
+        const constraints = { video: { width: { ideal: this.options.width }, height: { ideal: this.options.height }, facingMode: this.options.facingMode } };
+        this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+        this.videoElement.srcObject = this.stream;
+        this.videoElement.onloadedmetadata = () => { this.videoElement.play(); setTimeout(startAIPreview, 500); };
       }
-      stop() {
-        if (this.stream) {
-          this.stream.getTracks().forEach(track => track.stop());
-        }
-      }
+      stop() { if (this.stream) { this.stream.getTracks().forEach(track => track.stop()); } }
     }
 
     async function startCamera(facingMode) {
       if (cameraInstance) cameraInstance.stop();
       videoElement.style.transform = (facingMode === 'user') ? 'scaleX(-1)' : 'scaleX(1)';
-      cameraInstance = new SmartCamera(videoElement, {
-        width: 1280, height: 720, facingMode: facingMode
-      });
+      cameraInstance = new SmartCamera(videoElement, { width: 1280, height: 720, facingMode: facingMode });
       try {
         await cameraInstance.start();
-        statusEl.textContent = 'カメラ準備完了。AIロードを待ちます...';
+        statusEl.textContent = 'カメラ準備完了。AIのロードを待ちます...';
       } catch (err) {
         statusEl.textContent = '⚠️ ' + err.message;
-        alert(err.message + "\nブラウザの設定でカメラ許可を確認してください。");
+        startOverlay.style.display = 'flex'; loadingScreen.style.display = 'none';
+        alert("カメラへのアクセスを許可してください。\n設定アプリでブラウザのカメラアクセスを確認してください。");
       }
     }
 
-    function toggleCamera() {
-      currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
-      startCamera(currentFacingMode);
-    }
+    function toggleCamera() { currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user'; startCamera(currentFacingMode); }
+    function toggleDebug() { showDebug = !showDebug; if(!showDebug) debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height); }
 
     function animate() {
       requestAnimationFrame(animate);
@@ -317,9 +324,11 @@
     }
 
     window.addEventListener('resize', () => {
-      camera3d.aspect = window.innerWidth / window.innerHeight;
-      camera3d.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
+      if(renderer && camera3d) {
+        camera3d.aspect = window.innerWidth / window.innerHeight;
+        camera3d.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
     });
 
   </script>
