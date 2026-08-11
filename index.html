@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Error Free Edition</title>
+  <title>Everyone AR Beam - Dynamic Direction Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
       margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
       background-color: #000; color: #fff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      touch-action: none; /* スマホのデフォルトスクロール・ズームを強制禁止 */
+      touch-action: none;
     }
 
     #start-overlay {
@@ -90,7 +90,6 @@
     }
     window.addEventListener('resize', resizeCanvas);
 
-    // 開始処理
     startBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       startOverlay.style.display = 'none';
@@ -99,15 +98,28 @@
       animate();
     });
 
-    // タップイベントをキャンバスに直接紐付け（clickとtouchstartの両対応）
+    // タップ位置に応じてバラバラの角度からビームの根本を決定する処理
+    function calculateOrigin(targetX, targetY) {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      
+      // 画面の対角線をもとにランダムまたは方向をばらけさせるオフセット
+      const angle = Math.atan2(targetY - h / 2, targetX - w / 2) + (Math.random() - 0.5) * 1.5;
+      const length = Math.max(w, h) * 1.2;
+
+      return {
+        x: targetX - Math.cos(angle) * length,
+        y: targetY - Math.sin(angle) * length
+      };
+    }
+
     function handleTap(clientX, clientY) {
       if (startOverlay.style.display !== 'none') return;
-      if (clientY > window.innerHeight - 80) return; // UIボタン領域は除外
+      if (clientY > window.innerHeight - 80) return;
 
       let templateData = null;
       let videoX = 0, videoY = 0;
 
-      // カメラ準備OKなら画像パターンを抽出
       if (videoElement.readyState >= 2) {
         try {
           processCanvas.width = 320;
@@ -123,12 +135,17 @@
             30, 30
           );
         } catch (err) {
-          console.warn("Template extraction failed, fallback to static pos.", err);
+          console.warn("Template extraction error:", err);
         }
       }
 
+      // ターゲット（先端）ごとに独立した始点を計算
+      const origin = calculateOrigin(clientX, clientY);
+
       activeBeams.push({
-        x: clientX,
+        originX: origin.x, // 付け根（発射元）の位置
+        originY: origin.y,
+        x: clientX,        // 先端（ターゲット）の位置
         y: clientY,
         smoothX: clientX,
         smoothY: clientY,
@@ -137,10 +154,9 @@
         template: templateData
       });
 
-      statusEl.textContent = `⚡ ビーム発射！ (合計: ${activeBeams.length}本)`;
+      statusEl.textContent = `⚡ ロックオン完了！ (合計: ${activeBeams.length}本)`;
     }
 
-    // Touch & Mouse の両イベントを確実にキャッチ
     canvas.addEventListener('touchstart', (e) => {
       e.preventDefault();
       const touch = e.touches[0];
@@ -151,7 +167,6 @@
       handleTap(e.clientX, e.clientY);
     });
 
-    // UIボタン機能
     document.getElementById('remove-btn').addEventListener('click', (e) => {
       e.stopPropagation();
       if (activeBeams.length > 0) {
@@ -172,7 +187,6 @@
       startCamera(currentFacingMode);
     });
 
-    // 安全なオプティカルフロー追従処理
     function trackObjects() {
       if (activeBeams.length === 0 || videoElement.readyState < 2) return;
 
@@ -202,7 +216,7 @@
               if (curX < 0 || curX >= 320 - tW || curY < 0 || curY >= 240 - tH) continue;
 
               let diff = 0;
-              for (let i = 0; i < tData.length; i += 32) { // 軽量化
+              for (let i = 0; i < tData.length; i += 32) {
                 const fIdx = ((curY + Math.floor((i/4)/tW)) * 320 + (curX + ((i/4)%tW))) * 4;
                 diff += Math.abs(frame.data[fIdx] - tData[i]) + Math.abs(frame.data[fIdx+1] - tData[i+1]);
               }
@@ -220,9 +234,7 @@
           beam.x = (bestX / 320) * window.innerWidth;
           beam.y = (bestY / 240) * window.innerHeight;
         });
-      } catch (err) {
-        // エラーが起きてもアニメーションループを止めない
-      }
+      } catch (err) {}
     }
 
     async function startCamera(facingMode) {
@@ -244,28 +256,27 @@
     function animate() {
       requestAnimationFrame(animate);
 
-      // 描画エリアのクリア
       ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
       trackObjects();
 
-      const startX = window.innerWidth / 2;
-      const startY = window.innerHeight + 10;
-
       activeBeams.forEach((beam) => {
+        // 先端（ターゲット）の位置追従
         beam.smoothX += (beam.x - beam.smoothX) * 0.25;
         beam.smoothY += (beam.y - beam.smoothY) * 0.25;
 
+        const startX = beam.originX;
+        const startY = beam.originY;
         const targetX = beam.smoothX;
         const targetY = beam.smoothY;
 
-        // 1. ビーム外光（発光）
+        // 1. ビーム外光（シアン発光）
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(startX, startY);
         ctx.lineTo(targetX, targetY);
         ctx.strokeStyle = 'rgba(0, 255, 255, 0.85)';
-        ctx.lineWidth = 16;
+        ctx.lineWidth = 18;
         ctx.lineCap = 'round';
         ctx.shadowColor = '#00ffff';
         ctx.shadowBlur = 20;
@@ -283,14 +294,14 @@
         ctx.stroke();
         ctx.restore();
 
-        // 3. 照準ターゲット
+        // 3. 指定位置（先端）の照準マーカー
         ctx.save();
         ctx.beginPath();
         ctx.arc(targetX, targetY, 20 + Math.sin(Date.now() * 0.01) * 3, 0, Math.PI * 2);
         ctx.strokeStyle = '#00ffff';
         ctx.lineWidth = 3;
         ctx.shadowColor = '#00ffff';
-        ctx.shadowBlur = 10;
+        ctx.shadowBlur = 12;
         ctx.stroke();
 
         ctx.beginPath();
