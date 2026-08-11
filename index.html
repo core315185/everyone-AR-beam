@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - 3D WebGL Edition</title>
+  <title>Everyone AR Beam - 3D 3-Axis Motion Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -48,7 +48,6 @@
     }
     button.nav-btn.danger { background: #ef4444; }
   </style>
-  <!-- Three.js 3Dライブラリ -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
@@ -87,9 +86,8 @@
     const PROC_H = 240;
     const TEMP_SIZE = 24;
 
-    // --- Three.js 3D セットアップ ---
     let scene, camera, renderer;
-    const Z_PLANE = -10; // 3D空間の作業奥行き
+    const Z_PLANE = -12;
 
     function init3D() {
       scene = new THREE.Scene();
@@ -100,8 +98,7 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-      // 環境光・ポイントライト
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
       scene.add(ambientLight);
     }
 
@@ -113,41 +110,34 @@
     }
     window.addEventListener('resize', onWindowResize);
 
-    // スクリーン座標(px)を Three.js の 3D 空間座標へ変換
-    function screenTo3D(screenX, screenY) {
+    function screenTo3D(screenX, screenY, zDepth = Z_PLANE) {
       const ndcX = (screenX / window.innerWidth) * 2 - 1;
       const ndcY = -(screenY / window.innerHeight) * 2 + 1;
       const vec = new THREE.Vector3(ndcX, ndcY, 0.5);
       vec.unproject(camera);
       const dir = vec.sub(camera.position).normalize();
-      const distance = (Z_PLANE - camera.position.z) / dir.z;
+      const distance = (zDepth - camera.position.z) / dir.z;
       return camera.position.clone().add(dir.multiplyScalar(distance));
     }
 
-    // --- 3D ビームオブジェクト生成 ---
     function create3DBeamMesh() {
       const group = new THREE.Group();
 
-      // 1. 外側シアン発光ビーム（円柱）
-      const outerGeo = new THREE.CylinderGeometry(0.18, 0.05, 1, 16, 1, true);
-      outerGeo.translate(0, 0.5, 0);
-      outerGeo.rotateX(Math.PI / 2);
-
+      // 1. 外側ビーム（3Dシリンダー）
+      const outerGeo = new THREE.CylinderGeometry(0.2, 0.05, 1, 16);
+      outerGeo.translate(0, 0.5, 0); // 原点を底面に
       const outerMat = new THREE.MeshBasicMaterial({
         color: 0x00ffff,
         transparent: true,
-        opacity: 0.65,
-        side: THREE.DoubleSide,
+        opacity: 0.7,
         blending: THREE.AdditiveBlending
       });
       const outerMesh = new THREE.Mesh(outerGeo, outerMat);
       group.add(outerMesh);
 
-      // 2. 内側白い芯ビーム
-      const innerGeo = new THREE.CylinderGeometry(0.06, 0.02, 1, 12, 1, true);
+      // 2. 内側ビーム（白い芯）
+      const innerGeo = new THREE.CylinderGeometry(0.08, 0.02, 1, 12);
       innerGeo.translate(0, 0.5, 0);
-      innerGeo.rotateX(Math.PI / 2);
-
       const innerMat = new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
@@ -157,8 +147,8 @@
       const innerMesh = new THREE.Mesh(innerGeo, innerMat);
       group.add(innerMesh);
 
-      // 3. 3D ロックオンターゲットリング
-      const ringGeo = new THREE.RingtGeometry(0.25, 0.3, 32);
+      // 3. 3D ロックオンリング
+      const ringGeo = new THREE.RingGeometry(0.25, 0.32, 32);
       const ringMat = new THREE.MeshBasicMaterial({
         color: 0x00ffff,
         side: THREE.DoubleSide,
@@ -170,7 +160,7 @@
       group.add(ringMesh);
 
       // 4. 先端スパークパーティクル
-      const pCount = 30;
+      const pCount = 35;
       const pGeo = new THREE.BufferGeometry();
       const pPos = new Float32Array(pCount * 3);
       const pVel = [];
@@ -178,26 +168,23 @@
       for(let i = 0; i < pCount; i++) {
         pPos[i*3] = 0; pPos[i*3+1] = 0; pPos[i*3+2] = 0;
         pVel.push(new THREE.Vector3(
-          (Math.random() - 0.5) * 0.08,
-          (Math.random() - 0.5) * 0.08,
-          (Math.random() - 0.5) * 0.08
+          (Math.random() - 0.5) * 0.1,
+          (Math.random() - 0.5) * 0.1,
+          (Math.random() - 0.5) * 0.1
         ));
       }
       pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
       const pMat = new THREE.PointsMaterial({
-        color: 0x00ffff, size: 0.08, transparent: true, blending: THREE.AdditiveBlending
+        color: 0x00ffff, size: 0.09, transparent: true, blending: THREE.AdditiveBlending
       });
       const particleSystem = new THREE.Points(pGeo, pMat);
       group.add(particleSystem);
 
       scene.add(group);
 
-      return {
-        group, outerMesh, innerMesh, ringMesh, particleSystem, pVel, pPos
-      };
+      return { group, outerMesh, innerMesh, ringMesh, particleSystem, pVel };
     }
 
-    // --- イベント管理 ---
     startBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       startOverlay.style.display = 'none';
@@ -206,15 +193,18 @@
       animate();
     });
 
-    function calculateOrigin(targetX, targetY) {
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      const angle = Math.atan2(targetY - h / 2, targetX - w / 2) + (Math.random() - 0.5) * 1.5;
-      const length = Math.max(w, h) * 1.2;
-      return {
-        x: targetX - Math.cos(angle) * length,
-        y: targetY - Math.sin(angle) * length
-      };
+    // 3次元全方位（3面）からのランダムな発生源ポイントを生成
+    function calculate3DOrigin(targetX, targetY) {
+      const target3D = screenTo3D(targetX, targetY);
+      
+      // X, Y, Z の3軸全方向に拡散させた3D位置を作成
+      const randomDir = new THREE.Vector3(
+        (Math.random() - 0.5) * 20,
+        (Math.random() - 0.5) * 20,
+        -5 - Math.random() * 25 // 手前〜奥へ深く配置
+      );
+
+      return target3D.clone().add(randomDir);
     }
 
     function handleTap(clientX, clientY) {
@@ -240,12 +230,11 @@
         } catch (err) {}
       }
 
-      const origin = calculateOrigin(clientX, clientY);
+      const origin3D = calculate3DOrigin(clientX, clientY);
       const meshData = create3DBeamMesh();
 
       activeBeams.push({
-        originX: origin.x,
-        originY: origin.y,
+        origin3D: origin3D,
         x: clientX,
         y: clientY,
         smoothX: clientX,
@@ -256,7 +245,7 @@
         meshData: meshData
       });
 
-      statusEl.textContent = `⚡ 3Dロックオン！ (合計: ${activeBeams.length}本)`;
+      statusEl.textContent = `⚡ 3面立体ビーム発射！ (合計: ${activeBeams.length}本)`;
     }
 
     canvas3d.addEventListener('touchstart', (e) => {
@@ -291,7 +280,6 @@
       startCamera(currentFacingMode);
     });
 
-    // 高速トラッキング処理
     function trackObjects() {
       if (activeBeams.length === 0 || videoElement.readyState < 2) return;
 
@@ -309,7 +297,6 @@
           let bestY = beam.videoY;
           let minDiff = Infinity;
 
-          // 階層検索
           for (let dy = -36; dy <= 36; dy += 6) {
             for (let dx = -36; dx <= 36; dx += 6) {
               const curX = Math.floor(beam.videoX + dx);
@@ -359,41 +346,49 @@
       }
     }
 
-    // アニメーション＆3Dレンダリングループ
+    const defaultUp = new THREE.Vector3(0, 1, 0); // シリンダーの初期方向（Y軸）
+
     function animate() {
       requestAnimationFrame(animate);
 
       trackObjects();
 
       activeBeams.forEach((beam) => {
-        // スムージング追従
         beam.smoothX += (beam.x - beam.smoothX) * 0.4;
         beam.smoothY += (beam.y - beam.smoothY) * 0.4;
 
-        // 3D空間上の発射点と目標ターゲット点を計算
-        const start3D = screenTo3D(beam.originX, beam.originY);
+        const start3D = beam.origin3D;
         const target3D = screenTo3D(beam.smoothX, beam.smoothY);
 
-        const { outerMesh, innerMesh, ringMesh, particleSystem, pVel, pPos } = beam.meshData;
+        const { outerMesh, innerMesh, ringMesh, particleSystem, pVel } = beam.meshData;
 
-        // ビームの伸びと向き（3Dトランスフォーム）
-        const distance = start3D.distanceTo(target3D);
-        outerMesh.scale.set(1, 1, distance);
-        innerMesh.scale.set(1, 1, distance);
+        // 3D空間上の方向ベクトルと距離の計算
+        const dir = new THREE.Vector3().subVectors(target3D, start3D);
+        const distance = dir.length();
+        dir.normalize();
 
+        // 3軸（X, Y, Z）に合わせた全方位回転クォータニオン計算
+        const quaternion = new THREE.Quaternion();
+        quaternion.setFromUnitVectors(defaultUp, dir);
+
+        // 位置・回転・スケールの適用
         outerMesh.position.copy(start3D);
+        outerMesh.quaternion.copy(quaternion);
+        outerMesh.scale.set(1, distance, 1);
+
         innerMesh.position.copy(start3D);
+        innerMesh.quaternion.copy(quaternion);
+        innerMesh.scale.set(1, distance, 1);
 
-        outerMesh.lookAt(target3D);
-        innerMesh.lookAt(target3D);
-
-        // 3D照準リングの配置・回転アニメーション
+        // ロックオンリングをターゲット位置へ（ターゲット方向に向けて回転）
         ringMesh.position.copy(target3D);
-        ringMesh.rotation.z += 0.03;
-        const scalePulse = 1 + Math.sin(Date.now() * 0.008) * 0.15;
+        ringMesh.quaternion.copy(quaternion);
+        ringMesh.rotateX(Math.PI / 2); // リング面をビームと直角に
+        ringMesh.rotation.z += 0.04;
+        const scalePulse = 1 + Math.sin(Date.now() * 0.01) * 0.2;
         ringMesh.scale.set(scalePulse, scalePulse, scalePulse);
 
-        // 先端パーティクル（飛び散るスパーク）のアニメーション
+        // 先端3Dスパーク粒子のアニメーション
         particleSystem.position.copy(target3D);
         const positions = particleSystem.geometry.attributes.position.array;
 
@@ -402,8 +397,7 @@
           positions[i*3+1] += pVel[i].y;
           positions[i*3+2] += pVel[i].z;
 
-          // リセット処理
-          if (Math.abs(positions[i*3]) > 0.4 || Math.abs(positions[i*3+1]) > 0.4) {
+          if (Math.abs(positions[i*3]) > 0.5 || Math.abs(positions[i*3+1]) > 0.5 || Math.abs(positions[i*3+2]) > 0.5) {
             positions[i*3] = 0; positions[i*3+1] = 0; positions[i*3+2] = 0;
           }
         }
