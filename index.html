@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Ultra Fast Lite Edition</title>
+  <title>Everyone AR Beam - Fixed Tip Tracking</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -48,15 +48,13 @@
     }
     button.nav-btn.danger { background: #ef4444; }
   </style>
-  <!-- Three.js 3D Engine -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <!-- MediaPipe AI Vision CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
   <div id="start-overlay">
-    <button class="nav-btn" id="start-btn">⚡ 爆速ARビームを開始</button>
+    <button class="nav-btn" id="start-btn">⚡ ARビームを開始</button>
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
@@ -85,7 +83,6 @@
     let cameraStream = null;
     let activeBeams = [];
 
-    // 高速化のため解像度を半減 (160x120)
     const PROC_W = 160;
     const PROC_H = 120;
     const TEMP_SIZE = 14;
@@ -119,7 +116,7 @@
 
       renderer = new THREE.WebGLRenderer({ canvas: canvas3d, alpha: true, antialias: false });
       renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setPixelRatio(1); // ピクセル比固定で高速化
+      renderer.setPixelRatio(1);
 
       const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
       scene.add(ambientLight);
@@ -146,8 +143,11 @@
     function create3DBeamMesh() {
       const group = new THREE.Group();
 
-      const outerGeo = new THREE.CylinderGeometry(0.18, 0.04, 1, 8); // ポリゴン数削減
+      // 基準点を底面にするため +0.5 平行移動 (1単位長のシリンダー)
+      const outerGeo = new THREE.CylinderGeometry(0.15, 0.04, 1, 8);
       outerGeo.translate(0, 0.5, 0);
+      outerGeo.rotateX(Math.PI / 2); // Z軸方向に伸ばすための回転設定
+
       const outerMat = new THREE.MeshBasicMaterial({
         color: 0x00ffff,
         transparent: true,
@@ -157,8 +157,10 @@
       const outerMesh = new THREE.Mesh(outerGeo, outerMat);
       group.add(outerMesh);
 
-      const innerGeo = new THREE.CylinderGeometry(0.06, 0.02, 1, 6);
+      const innerGeo = new THREE.CylinderGeometry(0.05, 0.02, 1, 6);
       innerGeo.translate(0, 0.5, 0);
+      innerGeo.rotateX(Math.PI / 2);
+
       const innerMat = new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
@@ -168,7 +170,8 @@
       const innerMesh = new THREE.Mesh(innerGeo, innerMat);
       group.add(innerMesh);
 
-      const ringGeo = new THREE.RingGeometry(0.22, 0.28, 16);
+      // 着弾リングエフェクト
+      const ringGeo = new THREE.RingGeometry(0.2, 0.26, 16);
       const ringMat = new THREE.MeshBasicMaterial({
         color: 0x00ffff,
         side: THREE.DoubleSide,
@@ -177,9 +180,10 @@
         blending: THREE.AdditiveBlending
       });
       const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-      group.add(ringMesh);
+      scene.add(ringMesh); // リングは独立してターゲット位置に配置
 
-      const pCount = 15; // 粒子数半減
+      // 着弾粒子エフェクト
+      const pCount = 15;
       const pGeo = new THREE.BufferGeometry();
       const pPos = new Float32Array(pCount * 3);
       const pVel = [];
@@ -197,7 +201,7 @@
         color: 0x00ffff, size: 0.08, transparent: true, blending: THREE.AdditiveBlending
       });
       const particleSystem = new THREE.Points(pGeo, pMat);
-      group.add(particleSystem);
+      scene.add(particleSystem);
 
       scene.add(group);
 
@@ -318,13 +322,19 @@
       if (activeBeams.length > 0) {
         const lastBeam = activeBeams.pop();
         scene.remove(lastBeam.meshData.group);
+        scene.remove(lastBeam.meshData.ringMesh);
+        scene.remove(lastBeam.meshData.particleSystem);
         statusEl.textContent = `❌ 1本解除 (残り: ${activeBeams.length}本)`;
       }
     });
 
     document.getElementById('clear-btn').addEventListener('click', (e) => {
       e.stopPropagation();
-      activeBeams.forEach(b => scene.remove(b.meshData.group));
+      activeBeams.forEach(b => {
+        scene.remove(b.meshData.group);
+        scene.remove(b.meshData.ringMesh);
+        scene.remove(b.meshData.particleSystem);
+      });
       activeBeams = [];
       statusEl.textContent = '🗑 すべてのビームを削除しました';
     });
@@ -340,7 +350,6 @@
 
       frameCounter++;
 
-      // AI認識は3フレームに1回実行して負荷削減
       if (faceDetector && frameCounter % 3 === 0 && !isAiProcessing) {
         isAiProcessing = true;
         faceDetector.send({ image: videoElement }).catch(() => { isAiProcessing = false; });
@@ -379,7 +388,6 @@
             const predictX = beam.videoX + beam.vx;
             const predictY = beam.videoY + beam.vy;
 
-            // 軽量化された探索（ステップ=3）
             const searchRangeCoarse = 24;
             for (let dy = -searchRangeCoarse; dy <= searchRangeCoarse; dy += 3) {
               for (let dx = -searchRangeCoarse; dx <= searchRangeCoarse; dx += 3) {
@@ -445,42 +453,35 @@
       }
     }
 
-    const defaultUp = new THREE.Vector3(0, 1, 0);
-
     function animate() {
       requestAnimationFrame(animate);
 
       trackObjects();
 
       activeBeams.forEach((beam) => {
-        beam.smoothX += (beam.x - beam.smoothX) * 0.4;
-        beam.smoothY += (beam.y - beam.smoothY) * 0.4;
+        // ターゲット座標のスムージング（なめらか追従）
+        beam.smoothX += (beam.x - beam.smoothX) * 0.35;
+        beam.smoothY += (beam.y - beam.smoothY) * 0.35;
 
         const start3D = beam.origin3D;
         const target3D = screenTo3D(beam.smoothX, beam.smoothY);
 
-        const { outerMesh, innerMesh, ringMesh, particleSystem, pVel } = beam.meshData;
+        const { group, ringMesh, particleSystem, pVel } = beam.meshData;
 
+        // 始点から移動後の終点（ターゲット）までのベクトルと距離
         const dir = new THREE.Vector3().subVectors(target3D, start3D);
         const distance = dir.length();
-        dir.normalize();
 
-        const quaternion = new THREE.Quaternion();
-        quaternion.setFromUnitVectors(defaultUp, dir);
+        // 1. ビームグループの位置と向き・長さを毎フレーム完全に同期更新
+        group.position.copy(start3D);
+        group.lookAt(target3D); // ビームをターゲット方向に正しく向ける
+        group.scale.set(1, 1, distance); // ターゲットまでの距離に合わせて長さを伸縮
 
-        outerMesh.position.copy(start3D);
-        outerMesh.quaternion.copy(quaternion);
-        outerMesh.scale.set(1, distance, 1);
-
-        innerMesh.position.copy(start3D);
-        innerMesh.quaternion.copy(quaternion);
-        innerMesh.scale.set(1, distance, 1);
-
+        // 2. 着弾リングをターゲット位置へ同期
         ringMesh.position.copy(target3D);
-        ringMesh.quaternion.copy(quaternion);
-        ringMesh.rotateX(Math.PI / 2);
-        ringMesh.rotation.z += 0.05;
+        ringMesh.lookAt(camera.position); // 常にカメラ方向に向ける
 
+        // 3. パーティクルを着弾点へ同期
         particleSystem.position.copy(target3D);
         const positions = particleSystem.geometry.attributes.position.array;
 
