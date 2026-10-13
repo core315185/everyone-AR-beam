@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Tip Extension Edition</title>
+  <title>Everyone AR Beam - AI Skeleton & Tip Extension</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -21,8 +21,7 @@
 
     #webcam {
       position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-      object-fit: cover; z-index: 1; /* 左右反転なし（通常表示） */
-      pointer-events: none;
+      object-fit: cover; z-index: 1; pointer-events: none;
     }
 
     #webgl-canvas {
@@ -48,12 +47,16 @@
     }
     button.nav-btn.danger { background: #ef4444; }
   </style>
+  <!-- Three.js 3D Engine -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- MediaPipe Pose (骨格検出AI) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
   <div id="start-overlay">
-    <button class="nav-btn" id="start-btn">⚡ ARビームを開始</button>
+    <button class="nav-btn" id="start-btn">⚡ AI骨格認識 ARビーム開始</button>
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
@@ -61,11 +64,10 @@
   <canvas id="processCanvas" style="display:none;"></canvas>
 
   <div id="ui-container">
-    <div id="status">物の先端（ペン先や指先など）をタップしてください</div>
+    <div id="status">人体の先端（手や指など）をタップしてください</div>
     <div class="btn-group">
       <button class="nav-btn" id="remove-btn">❌ 1本解除</button>
       <button class="nav-btn danger" id="clear-btn">🗑 全削除</button>
-      <button class="nav-btn" id="cam-btn">📷 カメラ切替</button>
     </div>
   </div>
 
@@ -78,16 +80,32 @@
     const processCanvas = document.getElementById('processCanvas');
     const pCtx = processCanvas.getContext('2d', { willReadFrequently: true });
 
-    let currentFacingMode = 'environment';
     let cameraStream = null;
     let activeBeams = [];
 
-    const PROC_W = 160;
-    const PROC_H = 120;
-    const TEMP_SIZE = 16;
-
     let scene, camera, renderer;
     const Z_PLANE = -10;
+
+    // MediaPipe Pose 骨格検出
+    let poseDetector = null;
+    let latestPoseLandmarks = null;
+    let isPoseProcessing = false;
+
+    function initAI() {
+      poseDetector = new Pose({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+      });
+      poseDetector.setOptions({
+        modelComplexity: 1,
+        smoothLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+      poseDetector.onResults((results) => {
+        latestPoseLandmarks = results.poseLandmarks || null;
+        isPoseProcessing = false;
+      });
+    }
 
     function init3D() {
       scene = new THREE.Scene();
@@ -98,7 +116,7 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(1);
 
-      const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
       scene.add(ambientLight);
     }
 
@@ -120,40 +138,40 @@
       return camera.position.clone().add(dir.multiplyScalar(distance));
     }
 
-    // 先端からさらに延長していく3Dビームメッシュの生成
+    // 先端から奥へ延長する3Dビームの構築
     function create3DExtendedBeamMesh() {
       const group = new THREE.Group();
 
-      // 外側ビーム（先端からさらに奥へ延長）
-      const outerGeo = new THREE.CylinderGeometry(0.15, 0.04, 1, 8);
-      outerGeo.rotateX(Math.PI / 2);
-      outerGeo.translate(0, 0, 0.5);
+      // 外側ビーム（シリンダーをY軸方向に生成し、底面を原点にする）
+      const outerGeo = new THREE.CylinderGeometry(0.18, 0.04, 1, 12);
+      outerGeo.translate(0, 0.5, 0); // 原点を底面（先端）に合わせる
 
       const outerMat = new THREE.MeshBasicMaterial({
         color: 0x00ffff,
         transparent: true,
-        opacity: 0.8,
-        blending: THREE.AdditiveBlending
+        opacity: 0.75,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide
       });
       group.add(new THREE.Mesh(outerGeo, outerMat));
 
-      // 内側芯
-      const innerGeo = new THREE.CylinderGeometry(0.05, 0.01, 1, 6);
-      innerGeo.rotateX(Math.PI / 2);
-      innerGeo.translate(0, 0, 0.5);
+      // 内側芯ビーム
+      const innerGeo = new THREE.CylinderGeometry(0.06, 0.01, 1, 8);
+      innerGeo.translate(0, 0.5, 0);
 
       const innerMat = new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
         opacity: 0.95,
-        blending: THREE.AdditiveBlending
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide
       });
       group.add(new THREE.Mesh(innerGeo, innerMat));
 
       scene.add(group);
 
-      // タップした先端のリングエフェクト
-      const ringGeo = new THREE.RingGeometry(0.18, 0.24, 16);
+      // タップ（先端）位置のロックオンリング
+      const ringGeo = new THREE.RingGeometry(0.2, 0.26, 24);
       const ringMat = new THREE.MeshBasicMaterial({
         color: 0x00ffff,
         side: THREE.DoubleSide,
@@ -165,7 +183,7 @@
       scene.add(ringMesh);
 
       // 先端スパーク粒子
-      const pCount = 12;
+      const pCount = 15;
       const pGeo = new THREE.BufferGeometry();
       const pPos = new Float32Array(pCount * 3);
       const pVel = [];
@@ -173,9 +191,9 @@
       for(let i = 0; i < pCount; i++) {
         pPos[i*3] = 0; pPos[i*3+1] = 0; pPos[i*3+2] = 0;
         pVel.push(new THREE.Vector3(
-          (Math.random() - 0.5) * 0.06,
-          (Math.random() - 0.5) * 0.06,
-          (Math.random() - 0.5) * 0.06
+          (Math.random() - 0.5) * 0.08,
+          (Math.random() - 0.5) * 0.08,
+          (Math.random() - 0.5) * 0.08
         ));
       }
       pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
@@ -191,44 +209,36 @@
     startBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       startOverlay.style.display = 'none';
+      initAI();
       init3D();
-      startCamera(currentFacingMode);
+      startCamera();
       animate();
     });
-
-    function extractLuminance(imageData) {
-      const lum = new Float32Array(imageData.width * imageData.height);
-      const d = imageData.data;
-      for (let i = 0, j = 0; i < d.length; i += 4, j++) {
-        lum[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-      }
-      return lum;
-    }
 
     function handleTap(clientX, clientY) {
       if (startOverlay.style.display !== 'none') return;
       if (clientY > window.innerHeight - 80) return;
 
-      let lumTemplate = null;
-      let videoX = 0, videoY = 0;
+      let matchedLandmarkIndex = -1;
 
-      if (videoElement.readyState >= 2) {
-        try {
-          processCanvas.width = PROC_W;
-          processCanvas.height = PROC_H;
+      // 1. タップ位置の近くに骨格の関節（手首、指先など）があるか検索
+      if (latestPoseLandmarks) {
+        const normX = clientX / window.innerWidth;
+        const normY = clientY / window.innerHeight;
+        let minDist = 0.2; // 許容範囲
 
-          // 反転なしのそのままの座標
-          pCtx.drawImage(videoElement, 0, 0, PROC_W, PROC_H);
-          
-          videoX = (clientX / window.innerWidth) * PROC_W;
-          videoY = (clientY / window.innerHeight) * PROC_H;
-
-          const startX = Math.max(0, Math.min(PROC_W - TEMP_SIZE, Math.floor(videoX - TEMP_SIZE / 2)));
-          const startY = Math.max(0, Math.min(PROC_H - TEMP_SIZE, Math.floor(videoY - TEMP_SIZE / 2)));
-
-          const crop = pCtx.getImageData(startX, startY, TEMP_SIZE, TEMP_SIZE);
-          lumTemplate = extractLuminance(crop);
-        } catch (err) {}
+        // 主要な関節インデックス (15:右手首, 16:左手首, 19:右手, 20:左手など)
+        const targetIndices = [15, 16, 17, 18, 19, 20, 21, 22];
+        targetIndices.forEach(idx => {
+          const lm = latestPoseLandmarks[idx];
+          if (lm && lm.visibility > 0.5) {
+            const dist = Math.hypot(lm.x - normX, lm.y - normY);
+            if (dist < minDist) {
+              minDist = dist;
+              matchedLandmarkIndex = idx;
+            }
+          }
+        });
       }
 
       const meshData = create3DExtendedBeamMesh();
@@ -238,15 +248,13 @@
         y: clientY,
         smoothX: clientX,
         smoothY: clientY,
-        videoX: videoX,
-        videoY: videoY,
-        vx: 0,
-        vy: 0,
-        lumTemplate: lumTemplate,
+        landmarkIndex: matchedLandmarkIndex, // 骨格追従モード (-1なら通常テンプレート追従)
         meshData: meshData
       });
 
-      statusEl.textContent = `⚡ 先端認識・ビーム延長中！ (合計: ${activeBeams.length}本)`;
+      statusEl.textContent = matchedLandmarkIndex !== -1 
+        ? `🤖 骨格の先端をロックオン！ (合計: ${activeBeams.length}本)` 
+        : `⚡ ARビーム発射！ (合計: ${activeBeams.length}本)`;
     }
 
     canvas3d.addEventListener('touchstart', (e) => {
@@ -281,87 +289,34 @@
       statusEl.textContent = '🗑 すべてのビームを削除しました';
     });
 
-    document.getElementById('cam-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
-      startCamera(currentFacingMode);
-    });
-
-    // 高精度テンプレートマッチングによる「物の先端」追従トラッキング
     function trackObjects() {
       if (activeBeams.length === 0 || videoElement.readyState < 2) return;
 
-      try {
-        processCanvas.width = PROC_W;
-        processCanvas.height = PROC_H;
-        pCtx.drawImage(videoElement, 0, 0, PROC_W, PROC_H);
-        const frameData = pCtx.getImageData(0, 0, PROC_W, PROC_H);
-        const frameLum = extractLuminance(frameData);
+      // 骨格AIの送信
+      if (poseDetector && !isPoseProcessing) {
+        isPoseProcessing = true;
+        poseDetector.send({ image: videoElement }).catch(() => { isPoseProcessing = false; });
+      }
 
-        activeBeams.forEach(beam => {
-          if (!beam.lumTemplate) return;
-
-          const tLum = beam.lumTemplate;
-          let bestX = beam.videoX;
-          let bestY = beam.videoY;
-          let minSad = Infinity;
-
-          const predictX = beam.videoX + beam.vx;
-          const predictY = beam.videoY + beam.vy;
-
-          const searchRange = 32;
-          for (let dy = -searchRange; dy <= searchRange; dy += 2) {
-            for (let dx = -searchRange; dx <= searchRange; dx += 2) {
-              const cx = Math.floor(predictX + dx);
-              const cy = Math.floor(predictY + dy);
-              if (cx < 0 || cx >= PROC_W - TEMP_SIZE || cy < 0 || cy >= PROC_H - TEMP_SIZE) continue;
-
-              let sad = 0;
-              for (let ty = 0; ty < TEMP_SIZE; ty += 2) {
-                for (let tx = 0; tx < TEMP_SIZE; tx += 2) {
-                  const fIdx = (cy + ty) * PROC_W + (cx + tx);
-                  const tIdx = ty * TEMP_SIZE + tx;
-                  sad += Math.abs(frameLum[fIdx] - tLum[tIdx]);
-                }
-              }
-
-              if (sad < minSad) {
-                minSad = sad;
-                bestX = cx;
-                bestY = cy;
-              }
-            }
+      activeBeams.forEach(beam => {
+        // 骨格検出で一致する関節があれば、その正確な位置に先端を自動追従
+        if (beam.landmarkIndex !== -1 && latestPoseLandmarks) {
+          const lm = latestPoseLandmarks[beam.landmarkIndex];
+          if (lm && lm.visibility > 0.4) {
+            beam.x = lm.x * window.innerWidth;
+            beam.y = lm.y * window.innerHeight;
           }
-
-          const avgSad = minSad / (TEMP_SIZE * TEMP_SIZE / 4);
-          if (avgSad < 55) {
-            beam.vx = (bestX - beam.videoX) * 0.45;
-            beam.vy = (bestY - beam.videoY) * 0.45;
-
-            beam.videoX = bestX;
-            beam.videoY = bestY;
-
-            beam.x = (bestX / PROC_W) * window.innerWidth;
-            beam.y = (bestY / PROC_H) * window.innerHeight;
-          } else {
-            beam.videoX += beam.vx;
-            beam.videoY += beam.vy;
-            beam.vx *= 0.7;
-            beam.vy *= 0.7;
-          }
-        });
-      } catch (err) {}
+        }
+      });
     }
 
-    async function startCamera(facingMode) {
+    async function startCamera() {
       if (cameraStream) {
         cameraStream.getTracks().forEach(track => track.stop());
       }
-      videoElement.style.transform = 'none'; // 反転なし
-
       try {
         cameraStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: facingMode, width: { ideal: 480 }, height: { ideal: 360 } }
+          video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }
         });
         videoElement.srcObject = cameraStream;
       } catch (e) {
@@ -369,39 +324,41 @@
       }
     }
 
+    const defaultUp = new THREE.Vector3(0, 1, 0); // シリンダーの伸びる基準軸
+
     function animate() {
       requestAnimationFrame(animate);
 
       trackObjects();
 
       activeBeams.forEach((beam) => {
-        // 先端位置のスムージング
         beam.smoothX += (beam.x - beam.smoothX) * 0.4;
         beam.smoothY += (beam.y - beam.smoothY) * 0.4;
 
-        // タップした「物の先端」の3D位置
+        // 1. 選択された先端（ターゲット）の3D座標
         const tip3D = screenTo3D(beam.smoothX, beam.smoothY, -8);
-        
-        // カメラからその先端へ向かう方向ベクトルを算出し、その先端を起点にさらに奥（奥行き方向）へビームを延長させる
+
+        // 2. 先端からさらにカメラの視線方向へ向かって奥へ「延長」させる終点座標
         const camPos = camera.position;
-        const dir = new THREE.Vector3().subVectors(tip3D, camPos).normalize();
-        
-        // 先端からさらに向こうへ「延長」させる長さ
-        const extensionLength = 15.0; 
-        const farEnd3D = tip3D.clone().add(dir.multiplyScalar(extensionLength));
+        const rayDir = new THREE.Vector3().subVectors(tip3D, camPos).normalize();
+        const extensionLength = 20.0; // ビームの長さ
+        const farEnd3D = tip3D.clone().add(rayDir.multiplyScalar(extensionLength));
 
         const { group, ringMesh, particleSystem, pVel } = beam.meshData;
 
-        // ビームを先端(tip3D)から奥(farEnd3D)へ配置・延長
+        // 3. ビームの向きと長さを正確に計算して適用
         const beamDir = new THREE.Vector3().subVectors(farEnd3D, tip3D);
-        const beamLen = beamDir.length();
+        const beamLength = beamDir.length();
         beamDir.normalize();
 
-        group.position.copy(tip3D);
-        group.lookAt(farEnd3D);
-        group.scale.set(1, 1, beamLen);
+        const quaternion = new THREE.Quaternion();
+        quaternion.setFromUnitVectors(defaultUp, beamDir);
 
-        // リングとパーティクルを「物の先端」にピタリと合わせる
+        group.position.copy(tip3D);
+        group.quaternion.copy(quaternion);
+        group.scale.set(1, beamLength, 1); // 縦方向（Y軸）にビームを延長
+
+        // 4. リングとパーティクルを先端に同期
         ringMesh.position.copy(tip3D);
         ringMesh.lookAt(camera.position);
 
