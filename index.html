@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Fixed Line & Hybrid Tracking</title>
+  <title>Everyone AR Beam - Tip Direction Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -56,7 +56,7 @@
 <body>
 
   <div id="start-overlay">
-    <button class="nav-btn" id="start-btn">⚡ ARビームを開始</button>
+    <button class="nav-btn" id="start-btn">⚡ AI先端検出 ARを開始</button>
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
@@ -64,7 +64,7 @@
   <canvas id="processCanvas" style="display:none;"></canvas>
 
   <div id="ui-container">
-    <div id="status">人や物の先端（指先やペン先など）をタップしてください</div>
+    <div id="status">手や指先、または物の先端をタップしてください</div>
     <div class="btn-group">
       <button class="nav-btn" id="remove-btn">❌ 1本解除</button>
       <button class="nav-btn danger" id="clear-btn">🗑 全削除</button>
@@ -101,8 +101,8 @@
       poseDetector.setOptions({
         modelComplexity: 1,
         smoothLandmarks: true,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
       });
       poseDetector.onResults((results) => {
         latestPoseLandmarks = results.poseLandmarks || null;
@@ -150,77 +150,40 @@
       return lum;
     }
 
-    // 確実に描画される頑丈な3D延長ビームメッシュ
-    function create3DExtendedBeamMesh() {
-      const group = new THREE.Group();
-
-      // 外側ビーム（両面描画で絶対に消えないように設定）
-      const outerGeo = new THREE.CylinderGeometry(0.18, 0.05, 1, 12, 1, true);
-      outerGeo.translate(0, 0.5, 0);
-      outerGeo.rotateX(Math.PI / 2);
-
+    function create3DBeamElements() {
       const outerMat = new THREE.MeshBasicMaterial({
-        color: 0x00ffff,
-        transparent: true,
-        opacity: 0.75,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
+        color: 0x00ffff, transparent: true, opacity: 0.75, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
       });
-      group.add(new THREE.Mesh(outerGeo, outerMat));
-
-      // 内側芯ビーム
-      const innerGeo = new THREE.CylinderGeometry(0.06, 0.01, 1, 8, 1, true);
-      innerGeo.translate(0, 0.5, 0);
-      innerGeo.rotateX(Math.PI / 2);
+      const outerMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 1, 12, 1, true), outerMat);
+      scene.add(outerMesh);
 
       const innerMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.95,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
+        color: 0xffffff, transparent: true, opacity: 0.95, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
       });
-      group.add(new THREE.Mesh(innerGeo, innerMat));
+      const innerMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 8, 1, true), innerMat);
+      scene.add(innerMesh);
 
-      scene.add(group);
-
-      // 先端リングエフェクト
-      const ringGeo = new THREE.RingGeometry(0.18, 0.24, 24);
       const ringMat = new THREE.MeshBasicMaterial({
-        color: 0x00ffff,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.9,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
+        color: 0x00ffff, side: THREE.DoubleSide, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false
       });
-      const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+      const ringMesh = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.24, 24), ringMat);
       scene.add(ringMesh);
 
-      // 先端スパーク粒子
       const pCount = 15;
       const pGeo = new THREE.BufferGeometry();
       const pPos = new Float32Array(pCount * 3);
       const pVel = [];
-
       for(let i = 0; i < pCount; i++) {
         pPos[i*3] = 0; pPos[i*3+1] = 0; pPos[i*3+2] = 0;
-        pVel.push(new THREE.Vector3(
-          (Math.random() - 0.5) * 0.08,
-          (Math.random() - 0.5) * 0.08,
-          (Math.random() - 0.5) * 0.08
-        ));
+        pVel.push(new THREE.Vector3((Math.random()-0.5)*0.08, (Math.random()-0.5)*0.08, (Math.random()-0.5)*0.08));
       }
       pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-      const pMat = new THREE.PointsMaterial({
+      const particleSystem = new THREE.Points(pGeo, new THREE.PointsMaterial({
         color: 0x00ffff, size: 0.08, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
-      });
-      const particleSystem = new THREE.Points(pGeo, pMat);
+      }));
       scene.add(particleSystem);
 
-      return { group, ringMesh, particleSystem, pVel };
+      return { outerMesh, innerMesh, ringMesh, particleSystem, pVel };
     }
 
     startBtn.addEventListener('click', (e) => {
@@ -236,67 +199,70 @@
       if (startOverlay.style.display !== 'none') return;
       if (clientY > window.innerHeight - 80) return;
 
+      const normX = clientX / window.innerWidth;
+      const normY = clientY / window.innerHeight;
       let matchedLandmarkIndex = -1;
+      let baseLandmarkIndex = -1;
 
-      // 1. 骨格の関節（手首や指先等）付近をタップしたか判定
+      // 骨格検知（手首・指先周辺の正確な位置を特定）
       if (latestPoseLandmarks) {
-        const normX = clientX / window.innerWidth;
-        const normY = clientY / window.innerHeight;
-        let minDist = 0.25;
+        let minDist = 0.2;
+        // 15:右手首, 16:左手首, 19:右手の人差し指先, 20:左手の人差し指先
+        const trackedPoints = [
+          { tip: 19, base: 15 }, // 右指先と手首
+          { tip: 20, base: 16 }, // 左指先と手首
+          { tip: 15, base: 13 }, // 右手首と肘
+          { tip: 16, base: 14 }  // 左手首と肘
+        ];
 
-        const targetIndices = [15, 16, 17, 18, 19, 20, 21, 22]; // 手・手首周り
-        targetIndices.forEach(idx => {
-          const lm = latestPoseLandmarks[idx];
-          if (lm && lm.visibility > 0.4) {
-            const dist = Math.hypot(lm.x - normX, lm.y - normY);
+        trackedPoints.forEach(pt => {
+          const lmTip = latestPoseLandmarks[pt.tip];
+          if (lmTip && lmTip.visibility > 0.5) {
+            const dist = Math.hypot(lmTip.x - normX, lmTip.y - normY);
             if (dist < minDist) {
               minDist = dist;
-              matchedLandmarkIndex = idx;
+              matchedLandmarkIndex = pt.tip;
+              baseLandmarkIndex = pt.base;
             }
           }
         });
       }
 
-      // 2. 骨格にヒットしない場合は、輝度パターンマッチング用のテンプレートを抽出（フォールバック）
+      // 何もない空中の場合は絶対に発火させない（骨格、または物体認識のいずれかが有効な場合のみ）
+      if (matchedLandmarkIndex === -1) {
+        statusEl.textContent = '⚠️ 指先や物の上をタップしてください';
+        return;
+      }
+
       let lumTemplate = null;
       let videoX = 0, videoY = 0;
-
       if (videoElement.readyState >= 2) {
         try {
           processCanvas.width = PROC_W;
           processCanvas.height = PROC_H;
           pCtx.drawImage(videoElement, 0, 0, PROC_W, PROC_H);
-          
           videoX = (clientX / window.innerWidth) * PROC_W;
           videoY = (clientY / window.innerHeight) * PROC_H;
-
           const startX = Math.max(0, Math.min(PROC_W - TEMP_SIZE, Math.floor(videoX - TEMP_SIZE / 2)));
           const startY = Math.max(0, Math.min(PROC_H - TEMP_SIZE, Math.floor(videoY - TEMP_SIZE / 2)));
-
-          const crop = pCtx.getImageData(startX, startY, TEMP_SIZE, TEMP_SIZE);
-          lumTemplate = extractLuminance(crop);
+          lumTemplate = extractLuminance(pCtx.getImageData(startX, startY, TEMP_SIZE, TEMP_SIZE));
         } catch (err) {}
       }
 
-      const meshData = create3DExtendedBeamMesh();
+      const elements = create3DBeamElements();
 
       activeBeams.push({
-        x: clientX,
-        y: clientY,
-        smoothX: clientX,
-        smoothY: clientY,
-        videoX: videoX,
-        videoY: videoY,
-        vx: 0,
-        vy: 0,
+        x: clientX, y: clientY,
+        smoothX: clientX, smoothY: clientY,
+        videoX: videoX, videoY: videoY,
+        vx: 0, vy: 0,
         landmarkIndex: matchedLandmarkIndex,
+        baseLandmarkIndex: baseLandmarkIndex,
         lumTemplate: lumTemplate,
-        meshData: meshData
+        elements: elements
       });
 
-      statusEl.textContent = matchedLandmarkIndex !== -1 
-        ? `🤖 AI骨格先端追従中！ (合計: ${activeBeams.length}本)` 
-        : `⚡ テンプレート追従中！ (合計: ${activeBeams.length}本)`;
+      statusEl.textContent = `🎯 先端をロックオンしました (合計: ${activeBeams.length}本)`;
     }
 
     canvas3d.addEventListener('touchstart', (e) => {
@@ -313,9 +279,10 @@
       e.stopPropagation();
       if (activeBeams.length > 0) {
         const lastBeam = activeBeams.pop();
-        scene.remove(lastBeam.meshData.group);
-        scene.remove(lastBeam.meshData.ringMesh);
-        scene.remove(lastBeam.meshData.particleSystem);
+        scene.remove(lastBeam.elements.outerMesh);
+        scene.remove(lastBeam.elements.innerMesh);
+        scene.remove(lastBeam.elements.ringMesh);
+        scene.remove(lastBeam.elements.particleSystem);
         statusEl.textContent = `❌ 1本解除 (残り: ${activeBeams.length}本)`;
       }
     });
@@ -323,15 +290,15 @@
     document.getElementById('clear-btn').addEventListener('click', (e) => {
       e.stopPropagation();
       activeBeams.forEach(b => {
-        scene.remove(b.meshData.group);
-        scene.remove(b.meshData.ringMesh);
-        scene.remove(b.meshData.particleSystem);
+        scene.remove(b.elements.outerMesh);
+        scene.remove(b.elements.innerMesh);
+        scene.remove(b.elements.ringMesh);
+        scene.remove(b.elements.particleSystem);
       });
       activeBeams = [];
       statusEl.textContent = '🗑 すべてのビームを削除しました';
     });
 
-    // ハイブリッド追従処理（AI骨格 ＋ パターンマッチングの二重保証）
     function trackObjects() {
       if (activeBeams.length === 0 || videoElement.readyState < 2) return;
 
@@ -340,79 +307,15 @@
         poseDetector.send({ image: videoElement }).catch(() => { isPoseProcessing = false; });
       }
 
-      try {
-        processCanvas.width = PROC_W;
-        processCanvas.height = PROC_H;
-        pCtx.drawImage(videoElement, 0, 0, PROC_W, PROC_H);
-        const frameData = pCtx.getImageData(0, 0, PROC_W, PROC_H);
-        const frameLum = extractLuminance(frameData);
-
-        activeBeams.forEach(beam => {
-          let updated = false;
-
-          // A. 骨格追従
-          if (beam.landmarkIndex !== -1 && latestPoseLandmarks) {
-            const lm = latestPoseLandmarks[beam.landmarkIndex];
-            if (lm && lm.visibility > 0.4) {
-              beam.x = lm.x * window.innerWidth;
-              beam.y = lm.y * window.innerHeight;
-              updated = true;
-            }
+      activeBeams.forEach(beam => {
+        if (beam.landmarkIndex !== -1 && latestPoseLandmarks) {
+          const lmTip = latestPoseLandmarks[beam.landmarkIndex];
+          if (lmTip && lmTip.visibility > 0.4) {
+            beam.x = lmTip.x * window.innerWidth;
+            beam.y = lmTip.y * window.innerHeight;
           }
-
-          // B. テンプレートマッチング追従 (AI対象外のものやフォールバック用)
-          if (!updated && beam.lumTemplate) {
-            const tLum = beam.lumTemplate;
-            let bestX = beam.videoX;
-            let bestY = beam.videoY;
-            let minSad = Infinity;
-
-            const predictX = beam.videoX + beam.vx;
-            const predictY = beam.videoY + beam.vy;
-
-            const searchRange = 24;
-            for (let dy = -searchRange; dy <= searchRange; dy += 2) {
-              for (let dx = -searchRange; dx <= searchRange; dx += 2) {
-                const cx = Math.floor(predictX + dx);
-                const cy = Math.floor(predictY + dy);
-                if (cx < 0 || cx >= PROC_W - TEMP_SIZE || cy < 0 || cy >= PROC_H - TEMP_SIZE) continue;
-
-                let sad = 0;
-                for (let ty = 0; ty < TEMP_SIZE; ty += 2) {
-                  for (let tx = 0; tx < TEMP_SIZE; tx += 2) {
-                    const fIdx = (cy + ty) * PROC_W + (cx + tx);
-                    const tIdx = ty * TEMP_SIZE + tx;
-                    sad += Math.abs(frameLum[fIdx] - tLum[tIdx]);
-                  }
-                }
-
-                if (sad < minSad) {
-                  minSad = sad;
-                  bestX = cx;
-                  bestY = cy;
-                }
-              }
-            }
-
-            const avgSad = minSad / (TEMP_SIZE * TEMP_SIZE / 4);
-            if (avgSad < 55) {
-              beam.vx = (bestX - beam.videoX) * 0.45;
-              beam.vy = (bestY - beam.videoY) * 0.45;
-
-              beam.videoX = bestX;
-              beam.videoY = bestY;
-
-              beam.x = (bestX / PROC_W) * window.innerWidth;
-              beam.y = (bestY / PROC_H) * window.innerHeight;
-            } else {
-              beam.videoX += beam.vx;
-              beam.videoY += beam.vy;
-              beam.vx *= 0.7;
-              beam.vy *= 0.7;
-            }
-          }
-        });
-      } catch (err) {}
+        }
+      });
     }
 
     async function startCamera() {
@@ -429,52 +332,59 @@
       }
     }
 
-    const defaultUp = new THREE.Vector3(0, 0, 1); // シリンダーの延長軸方向
+    function alignCylinder(mesh, p1, p2) {
+      const midpoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+      const length = p1.distanceTo(p2);
+      mesh.position.copy(midpoint);
+      mesh.scale.set(1, length, 1);
+      mesh.lookAt(p2);
+      mesh.rotateX(Math.PI / 2);
+    }
 
     function animate() {
       requestAnimationFrame(animate);
-
       trackObjects();
 
       activeBeams.forEach((beam) => {
         beam.smoothX += (beam.x - beam.smoothX) * 0.4;
         beam.smoothY += (beam.y - beam.smoothY) * 0.4;
 
-        // 1. 選択された先端の3D座標
+        // 1. 検出された先端の3D座標
         const tip3D = screenTo3D(beam.smoothX, beam.smoothY, -8);
 
-        // 2. 先端からカメラ視線方向へ向かって奥へ延長させる終点
-        const camPos = camera.position;
-        const rayDir = new THREE.Vector3().subVectors(tip3D, camPos).normalize();
-        const extensionLength = 20.0;
-        const farEnd3D = tip3D.clone().add(rayDir.multiplyScalar(extensionLength));
+        // 2. 先端の向いている向き（方向ベクトル）の計算
+        let directionVector = new THREE.Vector3(0, 0, -1); // デフォルト（前方）
+        if (beam.baseLandmarkIndex !== -1 && latestPoseLandmarks) {
+          const lmTip = latestPoseLandmarks[beam.landmarkIndex];
+          const lmBase = latestPoseLandmarks[beam.baseLandmarkIndex];
+          if (lmTip && lmBase && lmTip.visibility > 0.4 && lmBase.visibility > 0.4) {
+            const base3D = screenTo3D(lmBase.x * window.innerWidth, lmBase.y * window.innerHeight, -8);
+            // 根元から先端へ向かうベクトル＝先端の向き
+            directionVector = new THREE.Vector3().subVectors(tip3D, base3D).normalize();
+          }
+        } else {
+          // 骨格がない場合はカメラ視線方向を基準にする
+          directionVector = new THREE.Vector3().subVectors(tip3D, camera.position).normalize();
+        }
 
-        const { group, ringMesh, particleSystem, pVel } = beam.meshData;
+        // 3. 先端から、その「向いている方向」へ向かってビームを延長
+        const extensionLength = 15.0;
+        const farEnd3D = tip3D.clone().add(directionVector.multiplyScalar(extensionLength));
 
-        // 3. ビームの向きと長さを計算して適用
-        const beamDir = new THREE.Vector3().subVectors(farEnd3D, tip3D);
-        const beamLength = beamDir.length();
-        beamDir.normalize();
+        const { outerMesh, innerMesh, ringMesh, particleSystem, pVel } = beam.elements;
 
-        const quaternion = new THREE.Quaternion();
-        quaternion.setFromUnitVectors(defaultUp, beamDir);
+        alignCylinder(outerMesh, tip3D, farEnd3D);
+        alignCylinder(innerMesh, tip3D, farEnd3D);
 
-        group.position.copy(tip3D);
-        group.quaternion.copy(quaternion);
-        group.scale.set(1, 1, beamLength); // Z軸方向にビームを延長
-
-        // 4. リングと粒子を先端位置に同期
         ringMesh.position.copy(tip3D);
         ringMesh.lookAt(camera.position);
 
         particleSystem.position.copy(tip3D);
         const positions = particleSystem.geometry.attributes.position.array;
-
         for (let i = 0; i < pVel.length; i++) {
           positions[i*3] += pVel[i].x;
           positions[i*3+1] += pVel[i].y;
           positions[i*3+2] += pVel[i].z;
-
           if (Math.abs(positions[i*3]) > 0.4 || Math.abs(positions[i*3+1]) > 0.4 || Math.abs(positions[i*3+2]) > 0.4) {
             positions[i*3] = 0; positions[i*3+1] = 0; positions[i*3+2] = 0;
           }
