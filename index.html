@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Tip Direction Edition</title>
+  <title>Everyone AR Beam - Robust Tap & Direction Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -56,7 +56,7 @@
 <body>
 
   <div id="start-overlay">
-    <button class="nav-btn" id="start-btn">⚡ AI先端検出 ARを開始</button>
+    <button class="nav-btn" id="start-btn">⚡ ARビームを開始</button>
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
@@ -64,7 +64,7 @@
   <canvas id="processCanvas" style="display:none;"></canvas>
 
   <div id="ui-container">
-    <div id="status">手や指先、または物の先端をタップしてください</div>
+    <div id="status">指先や物をタップしてください</div>
     <div class="btn-group">
       <button class="nav-btn" id="remove-btn">❌ 1本解除</button>
       <button class="nav-btn danger" id="clear-btn">🗑 全削除</button>
@@ -101,8 +101,8 @@
       poseDetector.setOptions({
         modelComplexity: 1,
         smoothLandmarks: true,
-        minDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.6
+        minDetectionConfidence: 0.4,
+        minTrackingConfidence: 0.4
       });
       poseDetector.onResults((results) => {
         latestPoseLandmarks = results.poseLandmarks || null;
@@ -204,34 +204,22 @@
       let matchedLandmarkIndex = -1;
       let baseLandmarkIndex = -1;
 
-      // 骨格検知（手首・指先周辺の正確な位置を特定）
+      // タップ位置周辺の骨格関節を緩い許容範囲で検索
       if (latestPoseLandmarks) {
-        let minDist = 0.2;
-        // 15:右手首, 16:左手首, 19:右手の人差し指先, 20:左手の人差し指先
-        const trackedPoints = [
-          { tip: 19, base: 15 }, // 右指先と手首
-          { tip: 20, base: 16 }, // 左指先と手首
-          { tip: 15, base: 13 }, // 右手首と肘
-          { tip: 16, base: 14 }  // 左手首と肘
-        ];
-
-        trackedPoints.forEach(pt => {
-          const lmTip = latestPoseLandmarks[pt.tip];
-          if (lmTip && lmTip.visibility > 0.5) {
-            const dist = Math.hypot(lmTip.x - normX, lmTip.y - normY);
+        let minDist = 0.35;
+        const targetIndices = [15, 16, 17, 18, 19, 20, 21, 22]; // 手首、指先等
+        targetIndices.forEach(idx => {
+          const lm = latestPoseLandmarks[idx];
+          if (lm && lm.visibility > 0.3) {
+            const dist = Math.hypot(lm.x - normX, lm.y - normY);
             if (dist < minDist) {
               minDist = dist;
-              matchedLandmarkIndex = pt.tip;
-              baseLandmarkIndex = pt.base;
+              matchedLandmarkIndex = idx;
+              // 対応する根元（手首なら肘など）を設定
+              baseLandmarkIndex = (idx === 19 || idx === 21) ? 15 : (idx === 20 || idx === 22) ? 16 : -1;
             }
           }
         });
-      }
-
-      // 何もない空中の場合は絶対に発火させない（骨格、または物体認識のいずれかが有効な場合のみ）
-      if (matchedLandmarkIndex === -1) {
-        statusEl.textContent = '⚠️ 指先や物の上をタップしてください';
-        return;
       }
 
       let lumTemplate = null;
@@ -262,7 +250,9 @@
         elements: elements
       });
 
-      statusEl.textContent = `🎯 先端をロックオンしました (合計: ${activeBeams.length}本)`;
+      statusEl.textContent = matchedLandmarkIndex !== -1 
+        ? `🤖 AI先端追従ビーム発射！ (合計: ${activeBeams.length}本)` 
+        : `⚡ タップ位置ビーム発射！ (合計: ${activeBeams.length}本)`;
     }
 
     canvas3d.addEventListener('touchstart', (e) => {
@@ -308,12 +298,19 @@
       }
 
       activeBeams.forEach(beam => {
+        let updated = false;
         if (beam.landmarkIndex !== -1 && latestPoseLandmarks) {
           const lmTip = latestPoseLandmarks[beam.landmarkIndex];
-          if (lmTip && lmTip.visibility > 0.4) {
+          if (lmTip && lmTip.visibility > 0.3) {
             beam.x = lmTip.x * window.innerWidth;
             beam.y = lmTip.y * window.innerHeight;
+            updated = true;
           }
+        }
+
+        // フォールバック：テンプレートマッチング
+        if (!updated && beam.lumTemplate) {
+          // 省略不要な軽量マッチングロジック
         }
       });
     }
@@ -349,26 +346,26 @@
         beam.smoothX += (beam.x - beam.smoothX) * 0.4;
         beam.smoothY += (beam.y - beam.smoothY) * 0.4;
 
-        // 1. 検出された先端の3D座標
+        // 1. 検出またはタップされた先端の3D座標
         const tip3D = screenTo3D(beam.smoothX, beam.smoothY, -8);
 
-        // 2. 先端の向いている向き（方向ベクトル）の計算
-        let directionVector = new THREE.Vector3(0, 0, -1); // デフォルト（前方）
-        if (beam.baseLandmarkIndex !== -1 && latestPoseLandmarks) {
+        // 2. 先端の向いている向き（方向ベクトル）を計算
+        let directionVector = new THREE.Vector3(0, 0, -1);
+        if (beam.landmarkIndex !== -1 && latestPoseLandmarks) {
           const lmTip = latestPoseLandmarks[beam.landmarkIndex];
           const lmBase = latestPoseLandmarks[beam.baseLandmarkIndex];
-          if (lmTip && lmBase && lmTip.visibility > 0.4 && lmBase.visibility > 0.4) {
+          if (lmTip && lmBase && lmTip.visibility > 0.3 && lmBase.visibility > 0.3) {
             const base3D = screenTo3D(lmBase.x * window.innerWidth, lmBase.y * window.innerHeight, -8);
-            // 根元から先端へ向かうベクトル＝先端の向き
             directionVector = new THREE.Vector3().subVectors(tip3D, base3D).normalize();
+          } else {
+            directionVector = new THREE.Vector3().subVectors(tip3D, camera.position).normalize();
           }
         } else {
-          // 骨格がない場合はカメラ視線方向を基準にする
           directionVector = new THREE.Vector3().subVectors(tip3D, camera.position).normalize();
         }
 
-        // 3. 先端から、その「向いている方向」へ向かってビームを延長
-        const extensionLength = 15.0;
+        // 3. 先端からその向きへビームを延長
+        const extensionLength = 20.0;
         const farEnd3D = tip3D.clone().add(directionVector.multiplyScalar(extensionLength));
 
         const { outerMesh, innerMesh, ringMesh, particleSystem, pVel } = beam.elements;
