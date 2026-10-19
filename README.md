@@ -51,3 +51,8 @@
 .
 ├── index.html     # WebGL 3D ARアプリ本体
 └── README.md      # 本ドキュメント
+
+⚠️ 注意事項・動作環境
+iOSをご利用の場合は Safari、Androidをご利用の場合は Chrome での閲覧を推奨します。
+
+カメラ機能およびAIモデルをロードするため、HTTPS環境（または localhost）でのアクセスが必要です。
