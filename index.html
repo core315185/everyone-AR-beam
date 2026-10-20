@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Robust Tap & Direction Edition</title>
+  <title>Everyone AR Beam - MediaPipe Hands Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -49,22 +49,21 @@
   </style>
   <!-- Three.js 3D Engine -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <!-- MediaPipe Pose (骨格検出AI) -->
+  <!-- MediaPipe Hands (ハンドトラッキングAI) -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
   <div id="start-overlay">
-    <button class="nav-btn" id="start-btn">⚡ ARビームを開始</button>
+    <button class="nav-btn" id="start-btn">🖐️ MediaPipe 手の認識 ARを開始</button>
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
   <canvas id="webgl-canvas"></canvas>
-  <canvas id="processCanvas" style="display:none;"></canvas>
 
   <div id="ui-container">
-    <div id="status">指先や物をタップしてください</div>
+    <div id="status">カメラに手をかざして、指先をタップしてください</div>
     <div class="btn-group">
       <button class="nav-btn" id="remove-btn">❌ 1本解除</button>
       <button class="nav-btn danger" id="clear-btn">🗑 全削除</button>
@@ -77,36 +76,31 @@
     const startOverlay = document.getElementById('start-overlay');
     const startBtn = document.getElementById('start-btn');
     const canvas3d = document.getElementById('webgl-canvas');
-    const processCanvas = document.getElementById('processCanvas');
-    const pCtx = processCanvas.getContext('2d', { willReadFrequently: true });
 
     let cameraStream = null;
     let activeBeams = [];
 
-    const PROC_W = 160;
-    const PROC_H = 120;
-    const TEMP_SIZE = 16;
-
     let scene, camera, renderer;
     const Z_PLANE = -10;
 
-    let poseDetector = null;
-    let latestPoseLandmarks = null;
-    let isPoseProcessing = false;
+    // MediaPipe Hands インスタンス
+    let handsDetector = null;
+    let latestHandLandmarks = [];
+    let isHandsProcessing = false;
 
     function initAI() {
-      poseDetector = new Pose({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+      handsDetector = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
       });
-      poseDetector.setOptions({
+      handsDetector.setOptions({
+        maxNumHands: 2,
         modelComplexity: 1,
-        smoothLandmarks: true,
-        minDetectionConfidence: 0.4,
-        minTrackingConfidence: 0.4
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
       });
-      poseDetector.onResults((results) => {
-        latestPoseLandmarks = results.poseLandmarks || null;
-        isPoseProcessing = false;
+      handsDetector.onResults((results) => {
+        latestHandLandmarks = results.multiHandLandmarks || [];
+        isHandsProcessing = false;
       });
     }
 
@@ -139,15 +133,6 @@
       const dir = vec.sub(camera.position).normalize();
       const distance = (zDepth - camera.position.z) / dir.z;
       return camera.position.clone().add(dir.multiplyScalar(distance));
-    }
-
-    function extractLuminance(imageData) {
-      const lum = new Float32Array(imageData.width * imageData.height);
-      const d = imageData.data;
-      for (let i = 0, j = 0; i < d.length; i += 4, j++) {
-        lum[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-      }
-      return lum;
     }
 
     function create3DBeamElements() {
@@ -201,40 +186,28 @@
 
       const normX = clientX / window.innerWidth;
       const normY = clientY / window.innerHeight;
-      let matchedLandmarkIndex = -1;
-      let baseLandmarkIndex = -1;
+      
+      let matchedLandmarks = null;
+      let targetLandmarkIndex = 8; // デフォルト：人差し指の先端 (ランドマーク8)
 
-      // タップ位置周辺の骨格関節を緩い許容範囲で検索
-      if (latestPoseLandmarks) {
-        let minDist = 0.35;
-        const targetIndices = [15, 16, 17, 18, 19, 20, 21, 22]; // 手首、指先等
-        targetIndices.forEach(idx => {
-          const lm = latestPoseLandmarks[idx];
-          if (lm && lm.visibility > 0.3) {
-            const dist = Math.hypot(lm.x - normX, lm.y - normY);
-            if (dist < minDist) {
-              minDist = dist;
-              matchedLandmarkIndex = idx;
-              // 対応する根元（手首なら肘など）を設定
-              baseLandmarkIndex = (idx === 19 || idx === 21) ? 15 : (idx === 20 || idx === 22) ? 16 : -1;
+      // タップ位置周辺の手のランドマークを探索
+      if (latestHandLandmarks.length > 0) {
+        let minDist = 0.3;
+        latestHandLandmarks.forEach(landmarks => {
+          // 主要な指先 (4:親指, 8:人差し指, 12:中指, 16:薬指, 20:小指)
+          const fingertips = [4, 8, 12, 16, 20];
+          fingertips.forEach(idx => {
+            const lm = landmarks[idx];
+            if (lm) {
+              const dist = Math.hypot(lm.x - normX, lm.y - normY);
+              if (dist < minDist) {
+                minDist = dist;
+                matchedLandmarks = landmarks;
+                targetLandmarkIndex = idx;
+              }
             }
-          }
+          });
         });
-      }
-
-      let lumTemplate = null;
-      let videoX = 0, videoY = 0;
-      if (videoElement.readyState >= 2) {
-        try {
-          processCanvas.width = PROC_W;
-          processCanvas.height = PROC_H;
-          pCtx.drawImage(videoElement, 0, 0, PROC_W, PROC_H);
-          videoX = (clientX / window.innerWidth) * PROC_W;
-          videoY = (clientY / window.innerHeight) * PROC_H;
-          const startX = Math.max(0, Math.min(PROC_W - TEMP_SIZE, Math.floor(videoX - TEMP_SIZE / 2)));
-          const startY = Math.max(0, Math.min(PROC_H - TEMP_SIZE, Math.floor(videoY - TEMP_SIZE / 2)));
-          lumTemplate = extractLuminance(pCtx.getImageData(startX, startY, TEMP_SIZE, TEMP_SIZE));
-        } catch (err) {}
       }
 
       const elements = create3DBeamElements();
@@ -242,17 +215,14 @@
       activeBeams.push({
         x: clientX, y: clientY,
         smoothX: clientX, smoothY: clientY,
-        videoX: videoX, videoY: videoY,
-        vx: 0, vy: 0,
-        landmarkIndex: matchedLandmarkIndex,
-        baseLandmarkIndex: baseLandmarkIndex,
-        lumTemplate: lumTemplate,
+        matchedLandmarks: matchedLandmarks,
+        targetLandmarkIndex: targetLandmarkIndex,
         elements: elements
       });
 
-      statusEl.textContent = matchedLandmarkIndex !== -1 
-        ? `🤖 AI先端追従ビーム発射！ (合計: ${activeBeams.length}本)` 
-        : `⚡ タップ位置ビーム発射！ (合計: ${activeBeams.length}本)`;
+      statusEl.textContent = matchedLandmarks 
+        ? `🖐️ 指先（ランドマーク #${targetLandmarkIndex}）をロックオン！ (合計: ${activeBeams.length}本)` 
+        : `⚡ タップ位置にビーム発射！ (合計: ${activeBeams.length}本)`;
     }
 
     canvas3d.addEventListener('touchstart', (e) => {
@@ -292,25 +262,19 @@
     function trackObjects() {
       if (activeBeams.length === 0 || videoElement.readyState < 2) return;
 
-      if (poseDetector && !isPoseProcessing) {
-        isPoseProcessing = true;
-        poseDetector.send({ image: videoElement }).catch(() => { isPoseProcessing = false; });
+      if (handsDetector && !isHandsProcessing) {
+        isHandsProcessing = true;
+        handsDetector.send({ image: videoElement }).catch(() => { isHandsProcessing = false; });
       }
 
       activeBeams.forEach(beam => {
-        let updated = false;
-        if (beam.landmarkIndex !== -1 && latestPoseLandmarks) {
-          const lmTip = latestPoseLandmarks[beam.landmarkIndex];
-          if (lmTip && lmTip.visibility > 0.3) {
-            beam.x = lmTip.x * window.innerWidth;
-            beam.y = lmTip.y * window.innerHeight;
-            updated = true;
+        if (beam.matchedLandmarks && latestHandLandmarks.length > 0) {
+          // 最も近くにある手のランドマーク群を再取得して追従
+          const targetLm = beam.matchedLandmarks[beam.targetLandmarkIndex];
+          if (targetLm) {
+            beam.x = targetLm.x * window.innerWidth;
+            beam.y = targetLm.y * window.innerHeight;
           }
-        }
-
-        // フォールバック：テンプレートマッチング
-        if (!updated && beam.lumTemplate) {
-          // 省略不要な軽量マッチングロジック
         }
       });
     }
@@ -346,25 +310,25 @@
         beam.smoothX += (beam.x - beam.smoothX) * 0.4;
         beam.smoothY += (beam.y - beam.smoothY) * 0.4;
 
-        // 1. 検出またはタップされた先端の3D座標
+        // 1. 指先の3D座標
         const tip3D = screenTo3D(beam.smoothX, beam.smoothY, -8);
 
-        // 2. 先端の向いている向き（方向ベクトル）を計算
+        // 2. 指先の向いている向き（関節の角度情報などを利用した方向ベクトル）
         let directionVector = new THREE.Vector3(0, 0, -1);
-        if (beam.landmarkIndex !== -1 && latestPoseLandmarks) {
-          const lmTip = latestPoseLandmarks[beam.landmarkIndex];
-          const lmBase = latestPoseLandmarks[beam.baseLandmarkIndex];
-          if (lmTip && lmBase && lmTip.visibility > 0.3 && lmBase.visibility > 0.3) {
-            const base3D = screenTo3D(lmBase.x * window.innerWidth, lmBase.y * window.innerHeight, -8);
-            directionVector = new THREE.Vector3().subVectors(tip3D, base3D).normalize();
-          } else {
-            directionVector = new THREE.Vector3().subVectors(tip3D, camera.position).normalize();
+        if (beam.matchedLandmarks) {
+          // 指先(例: 8)とその手前の関節(例: 6)のベクトルから、指が伸びている方向を計算
+          const tip = beam.matchedLandmarks[beam.targetLandmarkIndex];
+          const joint = beam.matchedLandmarks[beam.targetLandmarkIndex - 2]; // 中間関節
+          if (tip && joint) {
+            const tipPos3D = screenTo3D(tip.x * window.innerWidth, tip.y * window.innerHeight, -8);
+            const jointPos3D = screenTo3D(joint.x * window.innerWidth, joint.y * window.innerHeight, -8);
+            directionVector = new THREE.Vector3().subVectors(tipPos3D, jointPos3D).normalize();
           }
         } else {
           directionVector = new THREE.Vector3().subVectors(tip3D, camera.position).normalize();
         }
 
-        // 3. 先端からその向きへビームを延長
+        // 3. 指先からその方向へビームを延長
         const extensionLength = 20.0;
         const farEnd3D = tip3D.clone().add(directionVector.multiplyScalar(extensionLength));
 
