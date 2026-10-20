@@ -11,7 +11,7 @@ Webカメラで撮影した手や指先をリアルタイムにAI認識し、指
 ### 1. Web（GitHub Pages）から起動する（推奨）
 リポジトリの設定で **GitHub Pages** を有効化すると、アプリ用URLが発行されます。
 
-> **👉 [⚡ ARビームアプリを起動する](https://github.com/core315185/everyone-AR-beam.git/)**  
+> **👉 [⚡ ARビームアプリを起動する](https://core315185.github.io/everyone-AR-beam/)**
 
 ### 2. ローカル環境で起動する場合
 - **PCの場合**: Visual Studio Codeの拡張機能 **Live Server** などを使用し、ローカルWebサーバー経由で `index.html` を開いてください。
