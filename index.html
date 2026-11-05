@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Perfect Finger Tracking</title>
+  <title>Everyone AR Beam - Dynamic Hand Tracking</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -56,14 +56,14 @@
 <body>
 
   <div id="start-overlay">
-    <button class="nav-btn" id="start-btn">🖐️ 指先追従ARビームを開始</button>
+    <button class="nav-btn" id="start-btn">🖐️ 高精度追従ARビームを開始</button>
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
   <canvas id="webgl-canvas"></canvas>
 
   <div id="ui-container">
-    <div id="status">カメラに手をかざし、指先をタップしてください</div>
+    <div id="status">カメラに手をかざして指先をタップしてください</div>
     <div class="btn-group">
       <button class="nav-btn" id="remove-btn">❌ 1本解除</button>
       <button class="nav-btn danger" id="clear-btn">🗑 全削除</button>
@@ -124,6 +124,33 @@
     }
     window.addEventListener('resize', onWindowResize);
 
+    // MediaPipeの正規化座標 (0.0〜1.0) を object-fit: cover を考慮して画面座標へ変換
+    function normalizedToScreen(normX, normY) {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const videoW = videoElement.videoWidth || 640;
+      const videoH = videoElement.videoHeight || 480;
+
+      const videoAspect = videoW / videoH;
+      const screenAspect = vw / vh;
+
+      let scale = 1;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      if (screenAspect > videoAspect) {
+        scale = vw / videoW;
+        offsetY = (vh - videoH * scale) / 2;
+      } else {
+        scale = vh / videoH;
+        offsetX = (vw - videoW * scale) / 2;
+      }
+
+      const screenX = normX * videoW * scale + offsetX;
+      const screenY = normY * videoH * scale + offsetY;
+      return { x: screenX, y: screenY };
+    }
+
     function screenTo3D(screenX, screenY, zDepth = Z_PLANE) {
       const ndcX = (screenX / window.innerWidth) * 2 - 1;
       const ndcY = -(screenY / window.innerHeight) * 2 + 1;
@@ -183,25 +210,22 @@
       if (startOverlay.style.display !== 'none') return;
       if (clientY > window.innerHeight - 80) return;
 
-      const normX = clientX / window.innerWidth;
-      const normY = clientY / window.innerHeight;
-      
-      let bestHand = null;
-      let targetIdx = 8; // デフォルト：人差し指先端
-      let jointIdx = 6;  // 中間関節
-      let minDist = 0.25;
+      let bestHandIdx = -1;
+      let targetIdx = 8; // デフォルト：人差し指先端 (#8)
+      let jointIdx = 6;  // 中間関節 (#6)
+      let minDist = 120; // 画面上のピクセル距離許容値
 
-      // タップ位置に最も近い指先のランドマークを特定
       if (latestHandLandmarks.length > 0) {
-        latestHandLandmarks.forEach(landmarks => {
-          const fingertips = [4, 8, 12, 16, 20]; // 親、人差し、中、薬、小
+        latestHandLandmarks.forEach((landmarks, handIdx) => {
+          const fingertips = [4, 8, 12, 16, 20];
           fingertips.forEach(idx => {
             const lm = landmarks[idx];
             if (lm) {
-              const dist = Math.hypot(lm.x - normX, lm.y - normY);
+              const screenPt = normalizedToScreen(lm.x, lm.y);
+              const dist = Math.hypot(screenPt.x - clientX, screenPt.y - clientY);
               if (dist < minDist) {
                 minDist = dist;
-                bestHand = landmarks;
+                bestHandIdx = handIdx;
                 targetIdx = idx;
                 jointIdx = Math.max(0, idx - 2);
               }
@@ -217,15 +241,16 @@
         smoothX: clientX, smoothY: clientY,
         jointX: clientX, jointY: clientY,
         smoothJointX: clientX, smoothJointY: clientY,
-        handLandmarks: bestHand,
+        handIdx: bestHandIdx,
         targetIdx: targetIdx,
         jointIdx: jointIdx,
+        isTrackingAI: (bestHandIdx !== -1),
         elements: elements
       });
 
-      statusEl.textContent = bestHand 
-        ? `🎯 指先（#${targetIdx}）を追従ロック中！ (合計: ${activeBeams.length}本)` 
-        : `⚡ タップ位置にビーム発射 (合計: ${activeBeams.length}本)`;
+      statusEl.textContent = (bestHandIdx !== -1)
+        ? `🎯 指先（#${targetIdx}）をフルロックオン！ (合計: ${activeBeams.length}本)` 
+        : `⚡ タップ座標に発射 (手がかざされると自動追従) (合計: ${activeBeams.length}本)`;
     }
 
     canvas3d.addEventListener('touchstart', (e) => {
@@ -262,27 +287,52 @@
       statusEl.textContent = '🗑 すべてのビームを削除しました';
     });
 
+    // 毎フレーム、最新のAI検出結果（latestHandLandmarks）から指先座標を動的取得
     function trackObjects() {
-      if (activeBeams.length === 0 || videoElement.readyState < 2) return;
-
-      if (handsDetector && !isHandsProcessing) {
+      if (videoElement.readyState >= 2 && handsDetector && !isHandsProcessing) {
         isHandsProcessing = true;
         handsDetector.send({ image: videoElement }).catch(() => { isHandsProcessing = false; });
       }
 
+      if (activeBeams.length === 0 || latestHandLandmarks.length === 0) return;
+
       activeBeams.forEach(beam => {
-        if (beam.handLandmarks && latestHandLandmarks.length > 0) {
-          // リアルタイムに最新のフレームから該当する指先の座標を直接更新
-          const targetLm = beam.handLandmarks[beam.targetIdx];
-          const jointLm = beam.handLandmarks[beam.jointIdx];
-          if (targetLm) {
-            beam.x = targetLm.x * window.innerWidth;
-            beam.y = targetLm.y * window.innerHeight;
+        // AIでロックオンされている場合、毎フレーム最新の手の配列から座標を取得
+        let targetLandmarks = null;
+
+        if (beam.handIdx !== -1 && latestHandLandmarks[beam.handIdx]) {
+          targetLandmarks = latestHandLandmarks[beam.handIdx];
+        } else if (latestHandLandmarks.length > 0) {
+          // 手の順番が入れ替わった場合の最近傍探索フォールバック
+          let closestDist = Infinity;
+          latestHandLandmarks.forEach((lms) => {
+            const lm = lms[beam.targetIdx];
+            if (lm) {
+              const pt = normalizedToScreen(lm.x, lm.y);
+              const dist = Math.hypot(pt.x - beam.x, pt.y - beam.y);
+              if (dist < closestDist) {
+                closestDist = dist;
+                targetLandmarks = lms;
+              }
+            }
+          });
+        }
+
+        if (targetLandmarks) {
+          const tipLm = targetLandmarks[beam.targetIdx];
+          const jointLm = targetLandmarks[beam.jointIdx];
+
+          if (tipLm) {
+            const tipPos = normalizedToScreen(tipLm.x, tipLm.y);
+            beam.x = tipPos.x;
+            beam.y = tipPos.y;
           }
           if (jointLm) {
-            beam.jointX = jointLm.x * window.innerWidth;
-            beam.jointY = jointLm.y * window.innerHeight;
+            const jointPos = normalizedToScreen(jointLm.x, jointLm.y);
+            beam.jointX = jointPos.x;
+            beam.jointY = jointPos.y;
           }
+          beam.isTrackingAI = true;
         }
       });
     }
@@ -315,30 +365,36 @@
       trackObjects();
 
       activeBeams.forEach((beam) => {
-        // スムージング係数を調整してキビキビ追従
-        beam.smoothX += (beam.x - beam.smoothX) * 0.6;
-        beam.smoothY += (beam.y - beam.smoothY) * 0.6;
-        beam.smoothJointX += (beam.jointX - beam.smoothJointX) * 0.6;
-        beam.smoothJointY += (beam.jointY - beam.smoothJointY) * 0.6;
+        // スムージングで滑らかに高速追従 (係数0.75)
+        beam.smoothX += (beam.x - beam.smoothX) * 0.75;
+        beam.smoothY += (beam.y - beam.smoothY) * 0.75;
+        beam.smoothJointX += (beam.jointX - beam.smoothJointX) * 0.75;
+        beam.smoothJointY += (beam.jointY - beam.smoothJointY) * 0.75;
 
-        // 1. 指先の3D座標
+        // 1. 最新の指先の3D空間座標
         const tip3D = screenTo3D(beam.smoothX, beam.smoothY, -8);
 
-        // 2. 指の向き（関節から指先への方向ベクトル）
+        // 2. 指の傾き（中間関節 -> 指先へのベクトル）を正確に動的計算
         let directionVector = new THREE.Vector3(0, 0, -1);
-        if (beam.handLandmarks) {
+        if (beam.isTrackingAI) {
           const joint3D = screenTo3D(beam.smoothJointX, beam.smoothJointY, -8);
-          directionVector = new THREE.Vector3().subVectors(tip3D, joint3D).normalize();
+          const dir = new THREE.Vector3().subVectors(tip3D, joint3D);
+          if (dir.lengthSq() > 0.0001) {
+            directionVector = dir.normalize();
+          } else {
+            directionVector = new THREE.Vector3().subVectors(tip3D, camera.position).normalize();
+          }
         } else {
           directionVector = new THREE.Vector3().subVectors(tip3D, camera.position).normalize();
         }
 
-        // 3. 指先からその方向へビームを延長
+        // 3. 指先からその方向へビームを20単位延長
         const extensionLength = 20.0;
         const farEnd3D = tip3D.clone().add(directionVector.multiplyScalar(extensionLength));
 
         const { outerMesh, innerMesh, ringMesh, particleSystem, pVel } = beam.elements;
 
+        // ビームとメッシュの位置更新
         alignCylinder(outerMesh, tip3D, farEnd3D);
         alignCylinder(innerMesh, tip3D, farEnd3D);
 
