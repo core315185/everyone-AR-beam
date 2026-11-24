@@ -12,7 +12,7 @@ Webカメラで撮影した手や指先を **Google MediaPipe Hands** でリア�
 リポジトリの設定で **GitHub Pages** を有効化すると、アプリ用URLが発行されます。
 
 > **👉 [⚡ ARビームアプリを起動する](https://core315185.github.io/everyone-AR-beam/)**  
-> *(※ `<ユーザー名>` と `<リポジトリ名>` はご自身のGitHubアカウント・リポジトリ名に置き換えてください)*
+
 
 ### 2. ローカル環境で起動する場合
 - **PCの場合**: Visual Studio Codeの拡張機能 **Live Server** などを使用し、ローカルWebサーバー経由で `index.html` を開いてください。
