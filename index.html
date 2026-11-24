@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Everyone AR Beam - Perfect Debugged Edition</title>
+  <title>Everyone AR Beam - Next-Gen HTML5 Edition</title>
   <style>
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body, html {
@@ -15,8 +15,8 @@
 
     #start-overlay {
       position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-      background-color: rgba(0,0,0,0.9); z-index: 100;
-      display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 20px;
+      background: radial-gradient(circle, rgba(10,25,47,0.95) 0%, rgba(0,0,0,0.98) 100%);
+      z-index: 100; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 20px;
     }
 
     #webcam {
@@ -30,33 +30,37 @@
     }
 
     #ui-container {
-      position: absolute; bottom: 25px; left: 0; width: 100%; z-index: 20;
-      display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 0 15px;
+      position: absolute; bottom: 30px; left: 0; width: 100%; z-index: 20;
+      display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 0 15px;
       pointer-events: none;
     }
     #status {
-      font-size: 13px; background: rgba(0, 0, 0, 0.85);
-      padding: 8px 18px; border-radius: 20px; border: 1px solid #00ffff; text-align: center;
-      pointer-events: auto; box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+      font-size: 13px; background: rgba(10, 25, 47, 0.85);
+      padding: 10px 20px; border-radius: 20px; border: 1px solid #00ffff; text-align: center;
+      pointer-events: auto; box-shadow: 0 0 15px rgba(0, 255, 255, 0.4);
+      backdrop-filter: blur(5px);
     }
-    .btn-group { display: flex; gap: 6px; pointer-events: auto; }
+    .btn-group { display: flex; gap: 8px; pointer-events: auto; }
     button.nav-btn {
-      background: #3b82f6; color: #fff; border: none;
-      padding: 10px 16px; border-radius: 18px; font-size: 13px; font-weight: bold; cursor: pointer;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+      background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: #fff; border: none;
+      padding: 10px 18px; border-radius: 18px; font-size: 13px; font-weight: bold; cursor: pointer;
+      box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4); transition: transform 0.1s;
     }
-    button.nav-btn.danger { background: #ef4444; }
+    button.nav-btn:active { transform: scale(0.95); }
+    button.nav-btn.danger { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4); }
   </style>
-  <!-- Three.js 3D Engine -->
+  <!-- Three.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <!-- MediaPipe Hands (ハンドトラッキングAI) -->
+  <!-- MediaPipe Hands -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
   <div id="start-overlay">
-    <button class="nav-btn" id="start-btn">🖐️ 高精度ビーム発射を開始</button>
+    <h1 style="font-size: 24px; margin: 0; color: #00ffff; text-shadow: 0 0 10px rgba(0,255,255,0.6);">⚡ NEXT-GEN HTML5 AR BEAM</h1>
+    <p style="font-size: 14px; color: #94a3b8; margin: 0;">シングルファイル WebGL / MediaPipe 限界検証ビルド</p>
+    <button class="nav-btn" id="start-btn" style="padding: 14px 28px; font-size: 16px;">🚀 システム起動</button>
   </div>
 
   <video id="webcam" autoplay playsinline muted></video>
@@ -79,7 +83,6 @@
 
     let cameraStream = null;
     let activeBeams = [];
-
     let scene, camera, renderer;
     const Z_PLANE = -10;
 
@@ -94,8 +97,8 @@
       handsDetector.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
       });
       handsDetector.onResults((results) => {
         latestHandLandmarks = results.multiHandLandmarks || [];
@@ -108,12 +111,11 @@
       camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
       camera.position.set(0, 0, 0);
 
-      renderer = new THREE.WebGLRenderer({ canvas: canvas3d, alpha: true, antialias: true });
+      renderer = new THREE.WebGLRenderer({ canvas: canvas3d, alpha: true, antialias: true, powerPreference: "high-performance" });
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-      const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
-      scene.add(ambientLight);
+      scene.add(new THREE.AmbientLight(0xffffff, 2.0));
     }
 
     function onWindowResize() {
@@ -133,10 +135,7 @@
       const videoAspect = videoW / videoH;
       const screenAspect = vw / vh;
 
-      let scale = 1;
-      let offsetX = 0;
-      let offsetY = 0;
-
+      let scale = 1, offsetX = 0, offsetY = 0;
       if (screenAspect > videoAspect) {
         scale = vw / videoW;
         offsetY = (vh - videoH * scale) / 2;
@@ -145,9 +144,10 @@
         offsetX = (vw - videoW * scale) / 2;
       }
 
-      const screenX = normX * videoW * scale + offsetX;
-      const screenY = normY * videoH * scale + offsetY;
-      return { x: screenX, y: screenY };
+      return {
+        x: normX * videoW * scale + offsetX,
+        y: normY * videoH * scale + offsetY
+      };
     }
 
     function screenTo3D(screenX, screenY, zDepth = Z_PLANE) {
@@ -160,57 +160,47 @@
       return camera.position.clone().add(dir.multiplyScalar(distance));
     }
 
-    // デバッグ済みの確実に太く光るビーム要素の生成
+    // ハイエンド・プラズマ発光ビーム要素の生成
     function create3DBeamElements() {
-      // Y軸方向に生成されたCylinderをあらかじめ底面基準・Z軸向きに変形させておく
-      const geomOuter = new THREE.CylinderGeometry(0.2, 0.2, 1, 16, 1, true);
-      geomOuter.translate(0, 0.5, 0);
-      geomOuter.rotateX(Math.PI / 2);
+      const geom = new THREE.CylinderGeometry(0.22, 0.22, 1, 24, 1, true);
+      geom.translate(0, 0.5, 0);
+      geom.rotateX(Math.PI / 2);
 
-      const geomInner = new THREE.CylinderGeometry(0.07, 0.07, 1, 12, 1, true);
-      geomInner.translate(0, 0.5, 0);
-      geomInner.rotateX(Math.PI / 2);
-
+      // 外側プラズマ光彩
       const outerMat = new THREE.MeshBasicMaterial({
-        color: 0x00ffff,
-        transparent: true,
-        opacity: 0.8,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
+        color: 0x00f3ff, transparent: true, opacity: 0.7,
+        side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
       });
-      const outerMesh = new THREE.Mesh(geomOuter, outerMat);
+      const outerMesh = new THREE.Mesh(geom, outerMat);
       scene.add(outerMesh);
 
+      // 内部高輝度コア
+      const innerGeom = new THREE.CylinderGeometry(0.06, 0.06, 1, 16, 1, true);
+      innerGeom.translate(0, 0.5, 0);
+      innerGeom.rotateX(Math.PI / 2);
+
       const innerMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.95,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
+        color: 0xffffff, transparent: true, opacity: 0.95,
+        side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
       });
-      const innerMesh = new THREE.Mesh(geomInner, innerMat);
+      const innerMesh = new THREE.Mesh(innerGeom, innerMat);
       scene.add(innerMesh);
 
-      const ringMat = new THREE.MeshBasicMaterial({
-        color: 0x00ffff,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.9,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-      });
-      const ringMesh = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.28, 24), ringMat);
+      // 発光リング
+      const ringMesh = new THREE.Mesh(
+        new THREE.RingGeometry(0.15, 0.25, 32),
+        new THREE.MeshBasicMaterial({ color: 0x00ffff, side: THREE.DoubleSide, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false })
+      );
       scene.add(ringMesh);
 
-      const pCount = 20;
+      // スパークパーティクル
+      const pCount = 25;
       const pGeo = new THREE.BufferGeometry();
       const pPos = new Float32Array(pCount * 3);
       const pVel = [];
       for(let i = 0; i < pCount; i++) {
         pPos[i*3] = 0; pPos[i*3+1] = 0; pPos[i*3+2] = 0;
-        pVel.push(new THREE.Vector3((Math.random()-0.5)*0.08, (Math.random()-0.5)*0.08, (Math.random()-0.5)*0.08));
+        pVel.push(new THREE.Vector3((Math.random()-0.5)*0.12, (Math.random()-0.5)*0.12, (Math.random()-0.5)*0.12));
       }
       pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
       const particleSystem = new THREE.Points(pGeo, new THREE.PointsMaterial({
@@ -232,21 +222,17 @@
 
     function handleTap(clientX, clientY) {
       if (startOverlay.style.display !== 'none') return;
-      if (clientY > window.innerHeight - 80) return;
+      if (clientY > window.innerHeight - 90) return;
 
-      let bestHandIdx = -1;
-      let targetIdx = 8; // デフォルト：人差し指先端 (#8)
-      let jointIdx = 6;  // 中間関節 (#6)
-      let minDist = 150;
+      let bestHandIdx = -1, targetIdx = 8, jointIdx = 6, minDist = 160;
 
       if (latestHandLandmarks.length > 0) {
         latestHandLandmarks.forEach((landmarks, handIdx) => {
-          const fingertips = [4, 8, 12, 16, 20];
-          fingertips.forEach(idx => {
+          [4, 8, 12, 16, 20].forEach(idx => {
             const lm = landmarks[idx];
             if (lm) {
-              const screenPt = normalizedToScreen(lm.x, lm.y);
-              const dist = Math.hypot(screenPt.x - clientX, screenPt.y - clientY);
+              const pt = normalizedToScreen(lm.x, lm.y);
+              const dist = Math.hypot(pt.x - clientX, pt.y - clientY);
               if (dist < minDist) {
                 minDist = dist;
                 bestHandIdx = handIdx;
@@ -259,42 +245,34 @@
       }
 
       const elements = create3DBeamElements();
-
       activeBeams.push({
         x: clientX, y: clientY,
         smoothX: clientX, smoothY: clientY,
         jointX: clientX, jointY: clientY,
         smoothJointX: clientX, smoothJointY: clientY,
-        handIdx: bestHandIdx,
-        targetIdx: targetIdx,
-        jointIdx: jointIdx,
+        handIdx: bestHandIdx, targetIdx, jointIdx,
         isTrackingAI: (bestHandIdx !== -1),
-        elements: elements
+        elements
       });
 
       statusEl.textContent = (bestHandIdx !== -1)
-        ? `🎯 指先（#${targetIdx}）にロックオン！ (合計: ${activeBeams.length}本)` 
+        ? `⚡ プラズマビーム起動！ 指先 (#${targetIdx}) 追従中 (合計: ${activeBeams.length}本)`
         : `⚡ タップ位置にビーム発射 (合計: ${activeBeams.length}本)`;
     }
 
     canvas3d.addEventListener('touchstart', (e) => {
       e.preventDefault();
-      const touch = e.touches[0];
-      handleTap(touch.clientX, touch.clientY);
+      handleTap(e.touches[0].clientX, e.touches[0].clientY);
     }, { passive: false });
 
-    canvas3d.addEventListener('mousedown', (e) => {
-      handleTap(e.clientX, e.clientY);
-    });
+    canvas3d.addEventListener('mousedown', (e) => handleTap(e.clientX, e.clientY));
 
     document.getElementById('remove-btn').addEventListener('click', (e) => {
       e.stopPropagation();
       if (activeBeams.length > 0) {
-        const lastBeam = activeBeams.pop();
-        scene.remove(lastBeam.elements.outerMesh);
-        scene.remove(lastBeam.elements.innerMesh);
-        scene.remove(lastBeam.elements.ringMesh);
-        scene.remove(lastBeam.elements.particleSystem);
+        const b = activeBeams.pop();
+        scene.remove(b.elements.outerMesh); scene.remove(b.elements.innerMesh);
+        scene.remove(b.elements.ringMesh); scene.remove(b.elements.particleSystem);
         statusEl.textContent = `❌ 1本解除 (残り: ${activeBeams.length}本)`;
       }
     });
@@ -302,13 +280,11 @@
     document.getElementById('clear-btn').addEventListener('click', (e) => {
       e.stopPropagation();
       activeBeams.forEach(b => {
-        scene.remove(b.elements.outerMesh);
-        scene.remove(b.elements.innerMesh);
-        scene.remove(b.elements.ringMesh);
-        scene.remove(b.elements.particleSystem);
+        scene.remove(b.elements.outerMesh); scene.remove(b.elements.innerMesh);
+        scene.remove(b.elements.ringMesh); scene.remove(b.elements.particleSystem);
       });
       activeBeams = [];
-      statusEl.textContent = '🗑 すべてのビームを削除しました';
+      statusEl.textContent = '🗑 すべて消去しました';
     });
 
     function trackObjects() {
@@ -321,37 +297,30 @@
 
       activeBeams.forEach(beam => {
         let targetLandmarks = null;
-
         if (beam.handIdx !== -1 && latestHandLandmarks[beam.handIdx]) {
           targetLandmarks = latestHandLandmarks[beam.handIdx];
         } else if (latestHandLandmarks.length > 0) {
-          let closestDist = Infinity;
-          latestHandLandmarks.forEach((lms) => {
+          let closest = Infinity;
+          latestHandLandmarks.forEach(lms => {
             const lm = lms[beam.targetIdx];
             if (lm) {
               const pt = normalizedToScreen(lm.x, lm.y);
               const dist = Math.hypot(pt.x - beam.x, pt.y - beam.y);
-              if (dist < closestDist) {
-                closestDist = dist;
-                targetLandmarks = lms;
-              }
+              if (dist < closest) { closest = dist; targetLandmarks = lms; }
             }
           });
         }
 
         if (targetLandmarks) {
-          const tipLm = targetLandmarks[beam.targetIdx];
-          const jointLm = targetLandmarks[beam.jointIdx];
-
-          if (tipLm) {
-            const tipPos = normalizedToScreen(tipLm.x, tipLm.y);
-            beam.x = tipPos.x;
-            beam.y = tipPos.y;
+          const tip = targetLandmarks[beam.targetIdx];
+          const joint = targetLandmarks[beam.jointIdx];
+          if (tip) {
+            const p = normalizedToScreen(tip.x, tip.y);
+            beam.x = p.x; beam.y = p.y;
           }
-          if (jointLm) {
-            const jointPos = normalizedToScreen(jointLm.x, jointLm.y);
-            beam.jointX = jointPos.x;
-            beam.jointY = jointPos.y;
+          if (joint) {
+            const p = normalizedToScreen(joint.x, joint.y);
+            beam.jointX = p.x; beam.jointY = p.y;
           }
           beam.isTrackingAI = true;
         }
@@ -359,20 +328,17 @@
     }
 
     async function startCamera() {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach(track => track.stop());
-      }
+      if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
       try {
         cameraStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
         });
         videoElement.srcObject = cameraStream;
       } catch (e) {
-        statusEl.textContent = 'カメラ起動エラー: ' + e.message;
+        statusEl.textContent = 'カメラエラー: ' + e.message;
       }
     }
 
-    // 正確に2点（起点と終点）を空間上で結ぶクリーンなトランスフォーム関数
     function alignCylinderToPoints(mesh, p1, p2) {
       const length = p1.distanceTo(p2);
       mesh.position.copy(p1);
@@ -384,59 +350,41 @@
       requestAnimationFrame(animate);
       trackObjects();
 
-      activeBeams.forEach((beam) => {
-        // レスポンスと滑らかさを両立する追従速度設定
-        beam.smoothX += (beam.x - beam.smoothX) * 0.5;
-        beam.smoothY += (beam.y - beam.smoothY) * 0.5;
-        beam.smoothJointX += (beam.jointX - beam.smoothJointX) * 0.5;
-        beam.smoothJointY += (beam.jointY - beam.smoothJointY) * 0.5;
+      activeBeams.forEach(beam => {
+        beam.smoothX += (beam.x - beam.smoothX) * 0.6;
+        beam.smoothY += (beam.y - beam.smoothY) * 0.6;
+        beam.smoothJointX += (beam.jointX - beam.smoothJointX) * 0.6;
+        beam.smoothJointY += (beam.jointY - beam.smoothJointY) * 0.6;
 
-        // 1. 最新の指先の3D空間座標
         const tip3D = screenTo3D(beam.smoothX, beam.smoothY, -8);
+        let dir = new THREE.Vector3(0, 0, -1);
 
-        // 2. 指の傾き（中間関節 -> 指先へのベクトル）を正確に計算
-        let directionVector = new THREE.Vector3(0, 0, -1);
         if (beam.isTrackingAI) {
           const joint3D = screenTo3D(beam.smoothJointX, beam.smoothJointY, -8);
-          const dir = new THREE.Vector3().subVectors(tip3D, joint3D);
-          if (dir.lengthSq() > 0.0001) {
-            directionVector = dir.normalize();
-          } else {
-            directionVector = new THREE.Vector3().subVectors(tip3D, camera.position).normalize();
-          }
-        } else {
-          directionVector = new THREE.Vector3().subVectors(tip3D, camera.position).normalize();
+          const v = new THREE.Vector3().subVectors(tip3D, joint3D);
+          if (v.lengthSq() > 0.0001) dir = v.normalize();
         }
 
-        // 3. 指先から方向ベクトルに沿って奥へ25単位延長
-        const extensionLength = 25.0;
-        const farEnd3D = tip3D.clone().add(directionVector.multiplyScalar(extensionLength));
-
+        const farEnd3D = tip3D.clone().add(dir.multiplyScalar(30.0));
         const { outerMesh, innerMesh, ringMesh, particleSystem, pVel } = beam.elements;
 
-        // ビーム位置と向きの更新
         alignCylinderToPoints(outerMesh, tip3D, farEnd3D);
         alignCylinderToPoints(innerMesh, tip3D, farEnd3D);
-
         ringMesh.position.copy(tip3D);
         ringMesh.lookAt(camera.position);
 
         particleSystem.position.copy(tip3D);
-        const positions = particleSystem.geometry.attributes.position.array;
+        const pos = particleSystem.geometry.attributes.position.array;
         for (let i = 0; i < pVel.length; i++) {
-          positions[i*3] += pVel[i].x;
-          positions[i*3+1] += pVel[i].y;
-          positions[i*3+2] += pVel[i].z;
-          if (Math.abs(positions[i*3]) > 0.4 || Math.abs(positions[i*3+1]) > 0.4 || Math.abs(positions[i*3+2]) > 0.4) {
-            positions[i*3] = 0; positions[i*3+1] = 0; positions[i*3+2] = 0;
+          pos[i*3] += pVel[i].x; pos[i*3+1] += pVel[i].y; pos[i*3+2] += pVel[i].z;
+          if (Math.hypot(pos[i*3], pos[i*3+1], pos[i*3+2]) > 0.5) {
+            pos[i*3] = 0; pos[i*3+1] = 0; pos[i*3+2] = 0;
           }
         }
         particleSystem.geometry.attributes.position.needsUpdate = true;
       });
 
-      if (renderer && scene && camera) {
-        renderer.render(scene, camera);
-      }
+      if (renderer && scene && camera) renderer.render(scene, camera);
     }
   </script>
 </body>
